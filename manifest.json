@@ -1,0 +1,10 @@
+{
+  "id": "obsigent",
+  "name": "Obsigent",
+  "version": "0.1.0",
+  "minAppVersion": "1.8.0",
+  "description": "A local AI chat sidebar that can help with your Obsidian notes.",
+  "author": "Ken Kai",
+  "authorUrl": "https://www.youtube.com/@kenkaidoesai",
+  "isDesktopOnly": false
+}
