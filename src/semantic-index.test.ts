@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { chunkMarkdown, cosineSimilarity, SemanticIndex } from "./semantic-index";
+import {
+  chunkMarkdown,
+  cosineSimilarity,
+  parseSemanticIndexSnapshot,
+  SemanticIndex,
+} from "./semantic-index";
 import { DEFAULT_SETTINGS } from "./settings";
 
 type MockFile = Readonly<{
@@ -145,6 +150,20 @@ describe("SemanticIndex", () => {
     expect(embedTexts).toHaveBeenCalledTimes(2);
     const results = await index.search("beta", 1);
     expect(results[0]?.path).toBe("Alpha.md");
+  });
+
+  it("parses persisted snapshots defensively", async () => {
+    const { app } = createMockApp({ "Alpha.md": "alpha" });
+    const index = new SemanticIndex({
+      app: app as never,
+      settings: DEFAULT_SETTINGS,
+      embedTexts: createHashEmbedder(),
+    });
+    await index.update();
+
+    expect(parseSemanticIndexSnapshot(index.toSnapshot())?.files).toHaveLength(1);
+    expect(parseSemanticIndexSnapshot({ version: 1, files: [] })).toBeNull();
+    expect(parseSemanticIndexSnapshot(null)).toBeNull();
   });
 
   it("loads compatible snapshots and ignores incompatible snapshots", async () => {

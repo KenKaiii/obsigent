@@ -11,7 +11,11 @@ import { createMetadataTools } from "./metadata-tools";
 import { registerOllamaProvider } from "./ollama-provider";
 import { registerOpenAiCompatibleProvider } from "./openai-compatible-provider";
 import { getChatProviderConfig } from "./provider-config";
-import { SemanticIndex, type SemanticIndexStatus } from "./semantic-index";
+import {
+  SemanticIndex,
+  type SemanticIndexSnapshot,
+  type SemanticIndexStatus,
+} from "./semantic-index";
 import { createSemanticTools } from "./semantic-tools";
 import type { ObsigentSettings } from "./settings";
 import { createTaskTools } from "./task-tools";
@@ -57,6 +61,7 @@ export type LocalAgentOptions = Readonly<{
 export type SemanticIndexRuntimeOptions = Readonly<{
   app: App;
   settings: ObsigentSettings;
+  semanticIndexSnapshot?: SemanticIndexSnapshot;
 }>;
 
 export class LocalAgentRuntime {
@@ -157,6 +162,27 @@ export class LocalAgentRuntime {
     return await this.getSemanticIndex(options).rebuild(signal);
   }
 
+  public async updateSemanticIndex(
+    options: SemanticIndexRuntimeOptions,
+    signal?: AbortSignal,
+  ): Promise<SemanticIndexStatus | null> {
+    if (!options.settings.semanticSearchEnabled) {
+      return null;
+    }
+
+    return await this.getSemanticIndex(options).update(signal);
+  }
+
+  public getSemanticIndexSnapshot(
+    options: SemanticIndexRuntimeOptions,
+  ): SemanticIndexSnapshot | null {
+    if (!options.settings.semanticSearchEnabled) {
+      return null;
+    }
+
+    return this.getSemanticIndex(options).toSnapshot();
+  }
+
   public unloadNow(settings: ObsigentSettings): void {
     this.resetSession();
     void unloadOllamaModel(settings);
@@ -243,6 +269,7 @@ export class LocalAgentRuntime {
         });
         return result.embeddings;
       },
+      ...(options.semanticIndexSnapshot ? { snapshot: options.semanticIndexSnapshot } : {}),
     });
     return this.semanticIndex;
   }

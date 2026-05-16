@@ -58,6 +58,78 @@ export type SemanticIndexOptions = Readonly<{
   snapshot?: SemanticIndexSnapshot;
 }>;
 
+export function parseSemanticIndexSnapshot(value: unknown): SemanticIndexSnapshot | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (
+    value.version !== INDEX_VERSION ||
+    typeof value.embeddingModel !== "string" ||
+    typeof value.chunkChars !== "number" ||
+    !Array.isArray(value.files)
+  ) {
+    return null;
+  }
+
+  const files = value.files.flatMap((file): SemanticFileEntry[] => {
+    if (!isRecord(file) || typeof file.path !== "string") {
+      return [];
+    }
+    if (
+      typeof file.mtime !== "number" ||
+      typeof file.size !== "number" ||
+      !Array.isArray(file.chunks)
+    ) {
+      return [];
+    }
+
+    const chunks = file.chunks.flatMap((chunk): IndexedSemanticChunk[] => {
+      if (!isRecord(chunk) || typeof chunk.id !== "string" || typeof chunk.path !== "string") {
+        return [];
+      }
+      if (
+        typeof chunk.text !== "string" ||
+        typeof chunk.snippet !== "string" ||
+        typeof chunk.startLine !== "number" ||
+        typeof chunk.endLine !== "number" ||
+        !Array.isArray(chunk.embedding) ||
+        !chunk.embedding.every((value) => typeof value === "number" && Number.isFinite(value))
+      ) {
+        return [];
+      }
+
+      return [
+        {
+          id: chunk.id,
+          path: chunk.path,
+          heading: typeof chunk.heading === "string" ? chunk.heading : null,
+          text: chunk.text,
+          snippet: chunk.snippet,
+          startLine: chunk.startLine,
+          endLine: chunk.endLine,
+          embedding: chunk.embedding,
+        },
+      ];
+    });
+
+    return [
+      {
+        path: file.path,
+        mtime: file.mtime,
+        size: file.size,
+        chunks,
+      },
+    ];
+  });
+
+  return {
+    version: value.version,
+    embeddingModel: value.embeddingModel,
+    chunkChars: value.chunkChars,
+    files,
+  };
+}
+
 export class SemanticIndex {
   private readonly filesByPath = new Map<string, SemanticFileEntry>();
 
@@ -240,6 +312,10 @@ export function cosineSimilarity(first: readonly number[], second: readonly numb
     return 0;
   }
   return dot / (Math.sqrt(firstMagnitude) * Math.sqrt(secondMagnitude));
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null;
 }
 
 function rankChunks(

@@ -84,6 +84,26 @@ describe("local agent runtime", () => {
 
     expect(status?.noteCount).toBe(1);
     expect(runtime.getSemanticIndexStatus(options)?.chunkCount).toBe(1);
+    expect(runtime.getSemanticIndexSnapshot(options)?.files).toHaveLength(1);
+  });
+
+  it("loads semantic index snapshots in a fresh runtime", async () => {
+    const firstRuntime = new LocalAgentRuntime();
+    const baseOptions = {
+      app: createMockApp({ "Alpha.md": "alpha" }) as never,
+      settings: { ...DEFAULT_SETTINGS, embeddingModel: "nomic-embed-text" },
+    };
+    await firstRuntime.rebuildSemanticIndex(baseOptions);
+    const snapshot = firstRuntime.getSemanticIndexSnapshot(baseOptions);
+
+    const nextRuntime = new LocalAgentRuntime();
+    const status = nextRuntime.getSemanticIndexStatus({
+      ...baseOptions,
+      ...(snapshot ? { semanticIndexSnapshot: snapshot } : {}),
+    });
+
+    expect(status?.noteCount).toBe(1);
+    expect(status?.chunkCount).toBe(1);
   });
 
   it.skipIf(process.env.OBSIGENT_LIVE_OLLAMA !== "1")(
