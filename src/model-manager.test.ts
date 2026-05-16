@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  EMBEDDING_MODELS,
+  getEmbeddingModel,
   getVisionModel,
+  isEmbeddingCatalogModel,
   isVisionCatalogModel,
   toPullProgress,
   VISION_MODELS,
@@ -13,11 +16,23 @@ describe("model manager", () => {
     expect(VISION_MODELS.every((model) => model.sizeLabel.length > 0)).toBe(true);
   });
 
-  it("falls back for an installed model outside the catalog", () => {
+  it("exposes known local embedding model choices", () => {
+    expect(EMBEDDING_MODELS.map((model) => model.id)).toContain("nomic-embed-text");
+    expect(EMBEDDING_MODELS.map((model) => model.id)).toContain("mxbai-embed-large");
+    expect(EMBEDDING_MODELS.every((model) => model.sizeLabel.length > 0)).toBe(true);
+  });
+
+  it("falls back for installed models outside the catalog", () => {
     expect(isVisionCatalogModel("custom-vision:latest")).toBe(false);
     expect(getVisionModel("custom-vision:latest")).toEqual({
       id: "custom-vision:latest",
       label: "custom-vision:latest",
+      sizeLabel: "Installed",
+    });
+    expect(isEmbeddingCatalogModel("custom-embedding:latest")).toBe(false);
+    expect(getEmbeddingModel("custom-embedding:latest")).toEqual({
+      id: "custom-embedding:latest",
+      label: "custom-embedding:latest",
       sizeLabel: "Installed",
     });
   });

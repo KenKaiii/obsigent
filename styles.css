@@ -240,6 +240,58 @@
   white-space: nowrap;
 }
 
+.obsigent-edit-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--size-4-2);
+  margin-block: var(--size-4-2);
+}
+
+.obsigent-edit-before,
+.obsigent-edit-after {
+  max-height: 320px;
+  margin: 0;
+  padding: var(--size-4-2);
+  overflow: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  white-space: pre-wrap;
+}
+
+.obsigent-edit-before {
+  background: rgba(var(--color-red-rgb), 0.08);
+}
+
+.obsigent-edit-after {
+  background: rgba(var(--color-green-rgb), 0.08);
+}
+
+.obsigent-semantic-index-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-2-2);
+  padding: var(--size-2-1) var(--size-2-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.obsigent-semantic-index-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obsigent-semantic-index-rebuild {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 var(--size-2-2);
+  font-size: var(--font-ui-smaller);
+}
+
 .obsigent-input-wrap {
   position: relative;
   display: flex;
@@ -251,6 +303,52 @@
   border-radius: var(--radius-l);
   background: var(--background-primary);
   --obsigent-model-menu-width: min(260px, calc(100vw - 32px));
+}
+
+.obsigent-mention-menu {
+  position: absolute;
+  right: var(--size-4-2);
+  bottom: calc(100% - var(--size-4-2));
+  left: var(--size-4-2);
+  z-index: 10;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  box-shadow: var(--shadow-s);
+}
+
+.obsigent-mention-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-2-2);
+  width: 100%;
+  height: auto;
+  padding: var(--size-2-2) var(--size-4-2);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.obsigent-mention-option:hover,
+.obsigent-mention-option-active {
+  background: var(--background-modifier-hover);
+}
+
+.obsigent-mention-label {
+  overflow: hidden;
+  color: var(--text-normal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obsigent-mention-detail {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
 }
 
 .obsigent-input {

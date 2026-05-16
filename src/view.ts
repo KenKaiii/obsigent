@@ -17,10 +17,19 @@ import {
   type ProcessedAttachment,
   processAttachment,
 } from "./attachments";
-import { type ChatMessage, createMessageId, STARTER_MESSAGES } from "./chat";
+import { type ChatMessage, createMessageId, STARTER_MESSAGES, serializeChatSession } from "./chat";
+import { resolvePromptContext } from "./context-resolver";
 import { createRunId, logDebug } from "./debug";
 import type ObsigentPlugin from "./main";
 import {
+  applyMentionSuggestion,
+  getMentionQuery,
+  getMentionSuggestions,
+  type MentionQuery,
+  type MentionSuggestion,
+} from "./mention-suggestions";
+import {
+  getEmbeddingModel,
   getVisionModel,
   isVisionCatalogModel,
   listLocalModels,
@@ -28,6 +37,7 @@ import {
   pullModel,
   VISION_MODELS,
 } from "./model-manager";
+import { shouldOfferEmbeddingModelDownload } from "./semantic-index-status";
 export const OBSIGENT_VIEW_TYPE = "obsigent-agent-view";
 
 const THINKING_STATUS_LABELS: readonly string[] = [
@@ -148,6 +158,22 @@ const TOOL_STATUS_LABELS: Readonly<Record<string, readonly string[]>> = {
     "Rummaging through page pockets 🧥",
     "Chasing matching little words 🏃",
   ],
+  semantic_search: [
+    "Following meaning fireflies ✨",
+    "Asking the vector sprites 🧚",
+    "Searching by vibes and themes 🧭",
+    "Listening for similar ideas 👂",
+    "Comparing note constellations 🌌",
+    "Finding conceptual cousins 🧬",
+  ],
+  find_similar_notes: [
+    "Finding note neighbors 🏘️",
+    "Tracing related thought trails 🧵",
+    "Looking for sibling pages 📚",
+    "Matching kindred note spirits ✨",
+    "Mapping nearby ideas 🗺️",
+    "Gathering related context 🌿",
+  ],
   web_fetch: [
     "Reading a web page 🌐",
     "Opening the browser periscope 🔎",
@@ -178,6 +204,16 @@ function getToolStatusLabels(toolName: string): readonly string[] {
   return TOOL_STATUS_LABELS[toolName] ?? UNKNOWN_TOOL_STATUS_LABELS;
 }
 
+function formatSemanticIndexStatus(
+  status: ReturnType<ObsigentPlugin["localAgent"]["getSemanticIndexStatus"]>,
+): string {
+  if (!status || status.chunkCount === 0) {
+    return "Semantic index ready to build";
+  }
+
+  return `Indexed ${status.noteCount} notes · ${status.chunkCount} chunks`;
+}
+
 function safeDecodeURIComponent(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -199,6 +235,11 @@ export class ObsigentView extends ItemView {
   private modelLoadError: string | null = null;
   private modelDownloadProgress: PullProgress | null = null;
   private modelDownloadController: AbortController | null = null;
+  private semanticIndexStatusText: string | null = null;
+  private isRebuildingSemanticIndex = false;
+  private mentionQuery: MentionQuery | null = null;
+  private mentionSuggestions: readonly MentionSuggestion[] = [];
+  private activeMentionSuggestionIndex = 0;
   private messageIdToAnchor: string | null = null;
   private userScrolledDuringResponse = false;
   private activeAssistantMessageId: string | null = null;
@@ -218,6 +259,11 @@ export class ObsigentView extends ItemView {
 
   public getDisplayText(): string {
     return "Obsigent";
+  }
+
+  public setDraftPrompt(prompt: string): void {
+    this.draftPrompt = prompt;
+    this.render();
   }
 
   public async onOpen(): Promise<void> {
@@ -327,6 +373,7 @@ export class ObsigentView extends ItemView {
     const composer = root.createDiv({ cls: "obsigent-composer" });
 
     this.renderAttachments(composer);
+    this.renderSemanticIndexBar(composer);
 
     const inputWrap = composer.createDiv({ cls: "obsigent-input-wrap" });
     const input = inputWrap.createEl("textarea", {
@@ -338,6 +385,8 @@ export class ObsigentView extends ItemView {
     });
     input.value = this.draftPrompt;
     input.disabled = this.isSubmitting || this.isProcessingAttachments;
+    this.updateMentionSuggestions(input);
+    this.renderMentionSuggestions(inputWrap, input);
 
     const controlsRow = inputWrap.createDiv({ cls: "obsigent-input-controls" });
     const resetButton = controlsRow.createEl("button", {
@@ -393,10 +442,15 @@ export class ObsigentView extends ItemView {
 
     this.registerDomEvent(input, "input", () => {
       this.draftPrompt = input.value;
+      this.updateMentionSuggestions(input);
+      this.renderComposerOnly();
       updateSendButtonState();
     });
 
     this.registerDomEvent(input, "keydown", (event: KeyboardEvent) => {
+      if (this.handleMentionSuggestionKeydown(event, input)) {
+        return;
+      }
       if (event.key === "Enter" && !event.shiftKey && !event.repeat) {
         event.preventDefault();
         if (!this.isSubmitting) {
@@ -427,6 +481,163 @@ export class ObsigentView extends ItemView {
     });
 
     this.focusComposer(input);
+  }
+
+  private updateMentionSuggestions(input: HTMLTextAreaElement): void {
+    const query = getMentionQuery(input.value, input.selectionStart ?? input.value.length);
+    this.mentionQuery = query;
+    this.mentionSuggestions = query
+      ? getMentionSuggestions(this.app, this.plugin.settings, query.query)
+      : [];
+    this.activeMentionSuggestionIndex = Math.min(
+      this.activeMentionSuggestionIndex,
+      Math.max(0, this.mentionSuggestions.length - 1),
+    );
+  }
+
+  private renderMentionSuggestions(parent: HTMLElement, input: HTMLTextAreaElement): void {
+    if (!this.mentionQuery || this.mentionSuggestions.length === 0 || input.disabled) {
+      return;
+    }
+
+    const menu = parent.createDiv({ cls: "obsigent-mention-menu" });
+    for (const [index, suggestion] of this.mentionSuggestions.entries()) {
+      const option = menu.createEl("button", {
+        cls: `obsigent-mention-option${index === this.activeMentionSuggestionIndex ? " obsigent-mention-option-active" : ""}`,
+        attr: { type: "button" },
+      });
+      option.createSpan({ cls: "obsigent-mention-label", text: suggestion.label });
+      option.createSpan({ cls: "obsigent-mention-detail", text: suggestion.detail });
+      this.registerDomEvent(option, "mousedown", (event) => {
+        event.preventDefault();
+        this.applyMentionSuggestion(input, suggestion);
+      });
+    }
+  }
+
+  private handleMentionSuggestionKeydown(
+    event: KeyboardEvent,
+    input: HTMLTextAreaElement,
+  ): boolean {
+    if (!this.mentionQuery || this.mentionSuggestions.length === 0) {
+      return false;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      this.activeMentionSuggestionIndex =
+        (this.activeMentionSuggestionIndex + 1) % this.mentionSuggestions.length;
+      this.renderComposerOnly();
+      return true;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      this.activeMentionSuggestionIndex =
+        (this.activeMentionSuggestionIndex - 1 + this.mentionSuggestions.length) %
+        this.mentionSuggestions.length;
+      this.renderComposerOnly();
+      return true;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      const suggestion = this.mentionSuggestions[this.activeMentionSuggestionIndex];
+      if (suggestion) {
+        this.applyMentionSuggestion(input, suggestion);
+      }
+      return true;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      this.mentionQuery = null;
+      this.mentionSuggestions = [];
+      this.renderComposerOnly();
+      return true;
+    }
+    return false;
+  }
+
+  private applyMentionSuggestion(input: HTMLTextAreaElement, suggestion: MentionSuggestion): void {
+    if (!this.mentionQuery) {
+      return;
+    }
+    const nextValue = applyMentionSuggestion(input.value, this.mentionQuery, suggestion);
+    this.draftPrompt = nextValue;
+    this.mentionQuery = null;
+    this.mentionSuggestions = [];
+    this.activeMentionSuggestionIndex = 0;
+    this.renderComposerOnly();
+  }
+
+  private renderSemanticIndexBar(parent: HTMLElement): void {
+    if (!this.plugin.settings.semanticSearchEnabled) {
+      return;
+    }
+
+    const status = this.plugin.localAgent.getSemanticIndexStatus({
+      app: this.app,
+      settings: this.plugin.settings,
+    });
+    const statusText = this.semanticIndexStatusText ?? formatSemanticIndexStatus(status);
+    const bar = parent.createDiv({ cls: "obsigent-semantic-index-bar" });
+    bar.createSpan({ cls: "obsigent-semantic-index-label", text: statusText });
+    if (this.shouldOfferEmbeddingModelDownload(statusText)) {
+      const downloadButton = bar.createEl("button", {
+        cls: "obsigent-semantic-index-rebuild",
+        attr: {
+          type: "button",
+        },
+        text: this.modelDownloadController ? "Downloading…" : "Download embedding model",
+      });
+      downloadButton.disabled =
+        this.isSubmitting ||
+        this.isRebuildingSemanticIndex ||
+        this.modelDownloadController !== null;
+      this.registerDomEvent(downloadButton, "click", () => {
+        void this.downloadEmbeddingModelAndRebuild();
+      });
+    }
+
+    const rebuildButton = bar.createEl("button", {
+      cls: "obsigent-semantic-index-rebuild",
+      attr: {
+        type: "button",
+      },
+      text: this.isRebuildingSemanticIndex ? "Indexing…" : "Rebuild",
+    });
+    rebuildButton.disabled = this.isSubmitting || this.isRebuildingSemanticIndex;
+    this.registerDomEvent(rebuildButton, "click", () => {
+      void this.rebuildSemanticIndexFromView();
+    });
+  }
+
+  private shouldOfferEmbeddingModelDownload(statusText: string): boolean {
+    return shouldOfferEmbeddingModelDownload(statusText, this.plugin.settings.embeddingModel);
+  }
+
+  private async rebuildSemanticIndexFromView(): Promise<void> {
+    if (this.isRebuildingSemanticIndex) {
+      return;
+    }
+
+    this.isRebuildingSemanticIndex = true;
+    this.semanticIndexStatusText = "Indexing vault…";
+    this.renderComposerOnly();
+    try {
+      const status = await this.plugin.localAgent.rebuildSemanticIndex({
+        app: this.app,
+        settings: this.plugin.settings,
+      });
+      this.semanticIndexStatusText = status
+        ? `Indexed ${status.noteCount} notes · ${status.chunkCount} chunks`
+        : "Semantic search disabled";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.semanticIndexStatusText = `Index failed: ${message}`;
+      new Notice(`Could not rebuild semantic index: ${message}`);
+    } finally {
+      this.isRebuildingSemanticIndex = false;
+      this.renderComposerOnly();
+    }
   }
 
   private renderModelPicker(parent: HTMLElement): void {
@@ -574,6 +785,48 @@ export class ObsigentView extends ItemView {
     this.render();
   }
 
+  private async downloadEmbeddingModelAndRebuild(): Promise<void> {
+    if (this.modelDownloadController) {
+      return;
+    }
+
+    const modelId = this.plugin.settings.embeddingModel;
+    const model = getEmbeddingModel(modelId);
+    const abortController = new AbortController();
+    this.modelDownloadController = abortController;
+    this.semanticIndexStatusText = `Downloading ${model.label}…`;
+    this.renderComposerOnly();
+
+    try {
+      await pullModel(
+        this.plugin.settings.localEndpoint,
+        modelId,
+        (progress) => {
+          const percentText = progress.percent === null ? "…" : `${Math.round(progress.percent)}%`;
+          this.semanticIndexStatusText = `Downloading ${model.label}: ${percentText} ${progress.status}`;
+          this.renderComposerOnly();
+        },
+        abortController.signal,
+      );
+      new Notice(`Downloaded ${model.label}. Rebuilding semantic index…`);
+      await this.refreshInstalledModels();
+      await this.rebuildSemanticIndexFromView();
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        new Notice(`Cancelled ${model.label} download.`);
+      } else {
+        const message = error instanceof Error ? error.message : String(error);
+        this.semanticIndexStatusText = `Download failed: ${message}`;
+        new Notice(`Could not download ${model.label}: ${message}`);
+      }
+    } finally {
+      if (this.modelDownloadController === abortController) {
+        this.modelDownloadController = null;
+      }
+      this.renderComposerOnly();
+    }
+  }
+
   private async downloadModel(modelId: string): Promise<void> {
     if (this.modelDownloadController) {
       return;
@@ -706,8 +959,13 @@ export class ObsigentView extends ItemView {
       return;
     }
 
-    const submittedPrompt = this.createSubmittedPrompt(trimmedPrompt);
-    const displayPrompt = this.createDisplayPrompt(trimmedPrompt);
+    const resolvedContext = await resolvePromptContext({
+      app: this.app,
+      settings: this.plugin.settings,
+      prompt: trimmedPrompt,
+    });
+    const submittedPrompt = this.createSubmittedPrompt(resolvedContext.request);
+    const displayPrompt = this.createDisplayPrompt(resolvedContext.displayRequest);
 
     this.isSubmitting = true;
     this.isStopping = false;
@@ -717,6 +975,7 @@ export class ObsigentView extends ItemView {
     logDebug(this.plugin.settings.debug, runId, "view", "submit_accepted", {
       messageCount: this.messages.length,
     });
+    const now = new Date().toISOString();
     const userMessageId = createMessageId("user", this.messages.length);
     const assistantMessageId = createMessageId("assistant", this.messages.length + 1);
     this.messageIdToAnchor = userMessageId;
@@ -727,13 +986,13 @@ export class ObsigentView extends ItemView {
         id: userMessageId,
         role: "user",
         text: displayPrompt,
-        createdAt: "now",
+        createdAt: now,
       },
       {
         id: assistantMessageId,
         role: "assistant",
         text: "",
-        createdAt: "now",
+        createdAt: now,
       },
     ];
 
@@ -785,10 +1044,20 @@ export class ObsigentView extends ItemView {
       logDebug(this.plugin.settings.debug, runId, "view", "submit_finished", {
         messageCount: this.messages.length,
       });
+      await this.persistCurrentChat();
       this.render();
       this.messageIdToAnchor = null;
       this.userScrolledDuringResponse = false;
     }
+  }
+
+  private async persistCurrentChat(): Promise<void> {
+    if (!this.plugin.settings.persistChatHistory || this.messages.length === 0) {
+      return;
+    }
+    await this.plugin.saveChatSession(
+      serializeChatSession(this.messages, new Date().toISOString()),
+    );
   }
 
   private createSubmittedPrompt(prompt: string): string | (TextContent | ImageContent)[] {

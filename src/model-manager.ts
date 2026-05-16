@@ -4,6 +4,12 @@ export type VisionModel = Readonly<{
   sizeLabel: string;
 }>;
 
+export type EmbeddingModel = Readonly<{
+  id: string;
+  label: string;
+  sizeLabel: string;
+}>;
+
 export type LocalModel = Readonly<{
   name: string;
   size: number;
@@ -30,6 +36,24 @@ type OllamaPullChunk = Readonly<{
   completed?: number;
   total?: number;
 }>;
+
+export const EMBEDDING_MODELS: readonly EmbeddingModel[] = [
+  {
+    id: "nomic-embed-text",
+    label: "Nomic Embed Text",
+    sizeLabel: "~274 MB",
+  },
+  {
+    id: "mxbai-embed-large",
+    label: "Mxbai Embed Large",
+    sizeLabel: "~670 MB",
+  },
+  {
+    id: "embeddinggemma",
+    label: "EmbeddingGemma",
+    sizeLabel: "Recommended",
+  },
+];
 
 export const VISION_MODELS: readonly VisionModel[] = [
   {
@@ -137,6 +161,20 @@ export async function pullModel(
   } finally {
     reader.releaseLock();
   }
+}
+
+export function getEmbeddingModel(modelId: string): EmbeddingModel {
+  return (
+    EMBEDDING_MODELS.find((model) => model.id === modelId) ?? {
+      id: modelId,
+      label: modelId,
+      sizeLabel: "Installed",
+    }
+  );
+}
+
+export function isEmbeddingCatalogModel(modelId: string): boolean {
+  return EMBEDDING_MODELS.some((model) => model.id === modelId);
 }
 
 export function getVisionModel(modelId: string): VisionModel {

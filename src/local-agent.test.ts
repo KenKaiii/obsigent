@@ -14,9 +14,43 @@ vi.mock("obsidian", () => ({
   }),
 }));
 
+vi.mock("./embedding-provider", () => ({
+  embedWithOllama: async ({ input }: { input: string | readonly string[] }) => ({
+    embeddings: (typeof input === "string" ? [input] : input).map(() => [1, 0]),
+  }),
+}));
+
 import { z } from "zod";
-import { createDynamicPrompt, withDynamicPrompt } from "./local-agent";
+import {
+  createDynamicPrompt,
+  LocalAgentRuntime,
+  SYSTEM_PROMPT,
+  withDynamicPrompt,
+} from "./local-agent";
 import { getOllamaProviderName, registerOllamaProvider } from "./ollama-provider";
+import { DEFAULT_SETTINGS } from "./settings";
+
+type MockFile = Readonly<{
+  path: string;
+  extension: string;
+  stat: Readonly<{ mtime: number; size: number }>;
+}>;
+
+function createMockApp(contents: Readonly<Record<string, string>>): unknown {
+  const files = Object.entries(contents).map(
+    ([path, content]): MockFile => ({
+      path,
+      extension: "md",
+      stat: { mtime: 1, size: content.length },
+    }),
+  );
+  return {
+    vault: {
+      getMarkdownFiles: () => files,
+      cachedRead: async (file: MockFile) => contents[file.path] ?? "",
+    },
+  };
+}
 
 describe("local agent runtime", () => {
   it("builds dynamic date and time context for each prompt", () => {
@@ -31,6 +65,25 @@ describe("local agent runtime", () => {
     expect(withDynamicPrompt("hi there", "Current time: now")).toBe(
       "<context>Current time: now</context>\n\n<user_request>hi there</user_request>",
     );
+  });
+
+  it("guides the agent to choose semantic or lexical retrieval", () => {
+    expect(SYSTEM_PROMPT).toContain("Prefer semantic_search for conceptual questions");
+    expect(SYSTEM_PROMPT).toContain("Prefer search_notes for exact strings");
+    expect(SYSTEM_PROMPT).toContain("Use find_similar_notes");
+  });
+
+  it("rebuilds and reports semantic index status", async () => {
+    const runtime = new LocalAgentRuntime();
+    const options = {
+      app: createMockApp({ "Alpha.md": "alpha" }) as never,
+      settings: { ...DEFAULT_SETTINGS, embeddingModel: "nomic-embed-text" },
+    };
+
+    const status = await runtime.rebuildSemanticIndex(options);
+
+    expect(status?.noteCount).toBe(1);
+    expect(runtime.getSemanticIndexStatus(options)?.chunkCount).toBe(1);
   });
 
   it.skipIf(process.env.OBSIGENT_LIVE_OLLAMA !== "1")(

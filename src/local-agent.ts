@@ -1,17 +1,32 @@
 import type { AgentEvent } from "@kenkaiiii/gg-agent";
 import { Agent } from "@kenkaiiii/gg-agent";
-import type { ImageContent, Provider, TextContent } from "@kenkaiiii/gg-ai";
+import type { ImageContent, TextContent } from "@kenkaiiii/gg-ai";
 import type { App } from "obsidian";
 import { logDebug, setDebugEnabled } from "./debug";
-import { getOllamaProviderName, registerOllamaProvider } from "./ollama-provider";
+import { embedWithOllama } from "./embedding-provider";
+import { createGraphTools } from "./graph-tools";
+import { createMaintenanceTools } from "./maintenance-tools";
+import { createMemoryTools } from "./memory-tools";
+import { createMetadataTools } from "./metadata-tools";
+import { registerOllamaProvider } from "./ollama-provider";
+import { registerOpenAiCompatibleProvider } from "./openai-compatible-provider";
+import { getChatProviderConfig } from "./provider-config";
+import { SemanticIndex, type SemanticIndexStatus } from "./semantic-index";
+import { createSemanticTools } from "./semantic-tools";
 import type { ObsigentSettings } from "./settings";
+import { createTaskTools } from "./task-tools";
 import { createVaultTools, VaultChangeHistory } from "./vault-tools";
 import { createWebFetchTool, createWebSearchTool } from "./web-tools";
 
-const SYSTEM_PROMPT = `You are Obsigent, a local-first assistant inside an Obsidian vault.
+export const SYSTEM_PROMPT = `You are Obsigent, a local-first assistant inside an Obsidian vault.
 Be concise and useful.
 You may use vault tools to list, search, read, create, append, replace exact text in, overwrite markdown notes, list recent changes, and revert changes.
+Prefer semantic_search for conceptual questions, fuzzy recall, themes, and meaning-based retrieval. Prefer search_notes for exact strings, filenames, tags, or literal text.
+Use find_similar_notes when the user asks for notes related to a known note path.
 You may use web_search and web_fetch when the user asks for current information, docs, APIs, recent facts, or anything likely beyond your knowledge.
+Use metadata, graph, and task tools for tags, properties, backlinks, outlinks, orphan notes, broken links, and task review questions.
+Use memory tools only when the user explicitly asks you to remember, recall, or update durable memory.
+Use broad maintenance tools as previews/plans first; do not imply files were moved, renamed, trashed, or broadly edited unless a write tool explicitly confirms it.
 When editing notes, prefer targeted replace_in_note or append_note over overwrite_note. Use overwrite_note only when the user explicitly asks for a full rewrite or new full note content.
 create_note creates and opens the note immediately. Existing-note edits and reverts require user approval before writing.
 If a user asks to undo your last change, use list_recent_changes if needed, then revert_change.
@@ -39,12 +54,19 @@ export type LocalAgentOptions = Readonly<{
   runId: string;
 }>;
 
+export type SemanticIndexRuntimeOptions = Readonly<{
+  app: App;
+  settings: ObsigentSettings;
+}>;
+
 export class LocalAgentRuntime {
   private agent: Agent | null = null;
   private agentKey: string | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private abortController: AbortController | null = null;
   private runningPrompt: Promise<string> | null = null;
+  private semanticIndex: SemanticIndex | null = null;
+  private semanticIndexKey: string | null = null;
   private readonly changeHistory = new VaultChangeHistory();
 
   public async prompt(
@@ -116,6 +138,25 @@ export class LocalAgentRuntime {
     this.abortController = null;
   }
 
+  public getSemanticIndexStatus(options: SemanticIndexRuntimeOptions): SemanticIndexStatus | null {
+    if (!options.settings.semanticSearchEnabled) {
+      return null;
+    }
+
+    return this.getSemanticIndex(options).getStatus();
+  }
+
+  public async rebuildSemanticIndex(
+    options: SemanticIndexRuntimeOptions,
+    signal?: AbortSignal,
+  ): Promise<SemanticIndexStatus | null> {
+    if (!options.settings.semanticSearchEnabled) {
+      return null;
+    }
+
+    return await this.getSemanticIndex(options).rebuild(signal);
+  }
+
   public unloadNow(settings: ObsigentSettings): void {
     this.resetSession();
     void unloadOllamaModel(settings);
@@ -130,7 +171,9 @@ export class LocalAgentRuntime {
 
   private getAgent(options: LocalAgentOptions, signal: AbortSignal): Agent {
     registerOllamaProvider();
-    const key = `${options.settings.localEndpoint}|${options.settings.model}|${options.settings.safetyMode}`;
+    registerOpenAiCompatibleProvider();
+    const providerConfig = getChatProviderConfig(options.settings);
+    const key = `${options.settings.provider}|${providerConfig.baseUrl}|${providerConfig.model}|${options.settings.safetyMode}|${options.settings.semanticSearchEnabled}|${options.settings.embeddingModel}|${options.settings.semanticChunkChars}|${options.settings.semanticMaxResults}`;
     if (this.agent && this.agentKey === key) {
       logDebug(options.settings.debug, options.runId, "runtime", "reuse_agent");
       this.agent.setSignal(signal);
@@ -138,15 +181,15 @@ export class LocalAgentRuntime {
     }
 
     logDebug(options.settings.debug, options.runId, "runtime", "create_agent", {
-      model: options.settings.model,
-      endpoint: options.settings.localEndpoint,
+      model: providerConfig.model,
+      endpoint: providerConfig.baseUrl,
       tools: this.createTools(options).length,
     });
     this.agentKey = key;
     this.agent = new Agent({
-      provider: getOllamaProviderName() as Provider,
-      model: options.settings.model,
-      baseUrl: options.settings.localEndpoint.replace(/\/v1\/?$/u, ""),
+      provider: providerConfig.provider,
+      model: providerConfig.model,
+      baseUrl: providerConfig.baseUrl,
       system: SYSTEM_PROMPT,
       tools: this.createTools(options),
       maxTurns: 20,
@@ -163,13 +206,45 @@ export class LocalAgentRuntime {
   }
 
   private createTools(options: LocalAgentOptions): ReturnType<typeof createVaultTools> {
+    const semanticTools = options.settings.semanticSearchEnabled
+      ? createSemanticTools(this.getSemanticIndex(options), options.settings)
+      : [];
     return [
       ...createVaultTools(options.app, options.settings, {
         changeHistory: this.changeHistory,
       }),
+      ...semanticTools,
+      ...createMetadataTools(options.app, options.settings),
+      ...createGraphTools(options.app, options.settings),
+      ...createTaskTools(options.app, options.settings),
+      ...createMemoryTools(options.app, options.settings),
+      ...createMaintenanceTools(options.app, options.settings),
       createWebSearchTool(),
       createWebFetchTool(),
     ];
+  }
+
+  private getSemanticIndex(options: SemanticIndexRuntimeOptions): SemanticIndex {
+    const key = `${options.settings.localEndpoint}|${options.settings.embeddingModel}|${options.settings.semanticChunkChars}|${options.settings.excludedFolders.join(",")}`;
+    if (this.semanticIndex && this.semanticIndexKey === key) {
+      return this.semanticIndex;
+    }
+
+    this.semanticIndexKey = key;
+    this.semanticIndex = new SemanticIndex({
+      app: options.app,
+      settings: options.settings,
+      embedTexts: async (texts, signal) => {
+        const result = await embedWithOllama({
+          endpoint: options.settings.localEndpoint,
+          model: options.settings.embeddingModel,
+          input: texts,
+          ...(signal ? { signal } : {}),
+        });
+        return result.embeddings;
+      },
+    });
+    return this.semanticIndex;
   }
 
   private scheduleUnload(settings: ObsigentSettings): void {
