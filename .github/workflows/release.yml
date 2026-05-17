@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify
+        run: pnpm check && pnpm test
+      - name: Build
+        run: pnpm build
+      - name: Validate release files
+        run: pnpm release:validate
+      - name: Package plugin
+        run: pnpm package
+      - name: Attest plugin zip
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: dist/obsigent.zip
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            main.js
+            manifest.json
+            styles.css
+            dist/obsigent.zip
+          generate_release_notes: true

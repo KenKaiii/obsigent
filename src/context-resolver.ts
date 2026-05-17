@@ -30,15 +30,17 @@ export type ResolvePromptContextOptions = Readonly<{
   app: App;
   settings: ObsigentSettings;
   prompt: string;
+  projectContext?: ResolvedContextBlock;
 }>;
 
 export async function resolvePromptContext(
   options: ResolvePromptContextOptions,
 ): Promise<ContextResolution> {
   const references = parseContextReferences(options.prompt);
-  const blocks: ResolvedContextBlock[] = [];
+  const blocks: ResolvedContextBlock[] = options.projectContext ? [options.projectContext] : [];
   const warnings: string[] = [];
-  let remainingBudget = MAX_CONTEXT_CHARS;
+  let remainingBudget =
+    MAX_CONTEXT_CHARS - blocks.reduce((total, block) => total + block.content.length, 0);
 
   for (const reference of references) {
     if (remainingBudget <= 0) {

@@ -10,7 +10,10 @@ describe("DEFAULT_SETTINGS", () => {
     expect(DEFAULT_SETTINGS.provider).toBe("ollama");
     expect(DEFAULT_SETTINGS.localEndpoint).toMatch(/^http:\/\/localhost:/u);
     expect(DEFAULT_SETTINGS.openAiCompatibleEndpoint).toMatch(/^http:\/\/localhost:/u);
-    expect(DEFAULT_SETTINGS.apiKeyStorageMode).toBe("plugin-data");
+    expect(DEFAULT_SETTINGS.apiKeyStorageMode).toBe("secret-storage");
+    expect(DEFAULT_SETTINGS.openAiCompatibleApiKeySecretId).toBe(
+      "obsigent-openai-compatible-api-key",
+    );
   });
 
   it("enables semantic search with a local embedding model", () => {
@@ -29,5 +32,12 @@ describe("DEFAULT_SETTINGS", () => {
 
   it("keeps MCP disabled until explicitly configured", () => {
     expect(DEFAULT_SETTINGS.mcpServers).toEqual([]);
+  });
+
+  it("starts without custom workflow configuration", () => {
+    expect(DEFAULT_SETTINGS.customSystemPrompt).toBe("");
+    expect(DEFAULT_SETTINGS.promptTemplates).toEqual([]);
+    expect(DEFAULT_SETTINGS.projectFolders).toEqual([]);
+    expect(DEFAULT_SETTINGS.projectTags).toEqual([]);
   });
 });

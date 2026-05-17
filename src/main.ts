@@ -10,9 +10,11 @@ import {
 import { LocalAgentRuntime } from "./local-agent";
 import { registerOllamaProvider } from "./ollama-provider";
 import { registerOpenAiCompatibleProvider } from "./openai-compatible-provider";
+import { stripPersistedSecrets } from "./secrets";
 import { parseSemanticIndexSnapshot, type SemanticIndexSnapshot } from "./semantic-index";
 import type { ObsigentSettings } from "./settings";
 import { DEFAULT_SETTINGS } from "./settings";
+import { ObsigentSettingTab } from "./settings-tab";
 import { OBSIGENT_VIEW_TYPE, ObsigentView } from "./view";
 
 const SEMANTIC_INDEX_UPDATE_DELAY_MS = 15_000;
@@ -31,6 +33,7 @@ export default class ObsigentPlugin extends Plugin {
     await this.loadSettings();
 
     this.registerView(OBSIGENT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ObsigentView(leaf, this));
+    this.addSettingTab(new ObsigentSettingTab(this));
 
     this.addRibbonIcon("bot", "Open Obsigent", () => {
       void this.activateView();
@@ -395,7 +398,7 @@ export default class ObsigentPlugin extends Plugin {
 
   private async savePluginData(): Promise<void> {
     await this.saveData({
-      settings: this.settings,
+      settings: stripPersistedSecrets(this.settings),
       storedChats: this.storedChats,
       semanticIndexSnapshot: this.semanticIndexSnapshot,
     });

@@ -13,7 +13,9 @@
     "check": "biome check . && tsc -noEmit -skipLibCheck",
     "lint": "biome lint .",
     "format": "biome format --write .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "release:validate": "node scripts/validate-release.mjs",
+    "package": "node scripts/package-plugin.mjs"
   },
   "keywords": [
     "obsidian",
@@ -46,7 +48,6 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "mammoth": "^1.12.0",
     "pdfjs-dist": "^5.7.284",
-    "xlsx": "^0.18.5",
     "zod": "^4.4.3"
   },
   "pnpm": {

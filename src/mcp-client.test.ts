@@ -6,6 +6,7 @@ const server = {
   name: "Local MCP",
   endpoint: "http://127.0.0.1:3333/mcp",
   enabled: true,
+  transport: "streamable-http" as const,
   token: "secret",
 };
 

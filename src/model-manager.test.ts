@@ -10,8 +10,12 @@ import {
 
 describe("model manager", () => {
   it("only exposes known local vision model choices", () => {
-    expect(VISION_MODELS.map((model) => model.id)).toContain("gemma4:e2b");
-    expect(VISION_MODELS.map((model) => model.id)).toContain("gemma3:4b");
+    expect(VISION_MODELS.map((model) => model.id)).toEqual([
+      "gemma4:e2b",
+      "qwen2.5vl:3b",
+      "granite3.2-vision:2b",
+      "moondream:1.8b",
+    ]);
     expect(VISION_MODELS.every((model) => model.sizeLabel.length > 0)).toBe(true);
   });
 
@@ -37,13 +41,13 @@ describe("model manager", () => {
 
   it("computes pull percentages from Ollama progress chunks", () => {
     expect(
-      toPullProgress("gemma3:4b", {
+      toPullProgress("qwen2.5vl:3b", {
         status: "pulling manifest",
         completed: 25,
         total: 100,
       }),
     ).toEqual({
-      model: "gemma3:4b",
+      model: "qwen2.5vl:3b",
       status: "pulling manifest",
       completed: 25,
       total: 100,

@@ -48,6 +48,39 @@ describe("ollama provider", () => {
     expect(retries).toBe(0);
   });
 
+  it("serializes assistant tool calls for Ollama follow-up requests", () => {
+    expect(
+      toOllamaMessages([
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_call",
+              id: "call-1",
+              name: "create_note",
+              args: { path: "News.md", content: "# News" },
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            type: "function",
+            function: {
+              index: 0,
+              name: "create_note",
+              arguments: { path: "News.md", content: "# News" },
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
   it("serializes user image content for Ollama vision models", () => {
     expect(
       toOllamaMessages([

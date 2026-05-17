@@ -94,6 +94,7 @@ export function createVaultTools(
   const tools: AgentTool[] = [
     createListNotesTool(app, settings),
     createReadNoteTool(app, settings),
+    createOpenNoteTool(app, settings),
     createSearchNotesTool(app, settings),
   ];
 
@@ -158,6 +159,27 @@ function createReadNoteTool(
       }
 
       return `${content.slice(0, MAX_READ_CHARS)}\n\n[Truncated ${content.length - MAX_READ_CHARS} characters]`;
+    },
+  } satisfies AgentTool<typeof parameters>;
+}
+
+function createOpenNoteTool(
+  app: App,
+  settings: ObsigentSettings,
+): AgentTool<z.ZodObject<{ path: z.ZodString }>> {
+  const parameters = z.object({
+    path: z.string().describe("Vault-relative markdown note path to open visibly in Obsidian."),
+  });
+
+  return {
+    name: "open_note",
+    description:
+      "Open one existing markdown note visibly in Obsidian. Use when the user asks to open a file, not merely read it.",
+    parameters,
+    execute: async ({ path }) => {
+      const file = getAllowedMarkdownFile(app, settings, path, "opened");
+      await openNote(app, file);
+      return `Opened ${file.path}.`;
     },
   } satisfies AgentTool<typeof parameters>;
 }
@@ -237,6 +259,7 @@ function createNoteTool(
       const file = await app.vault.create(normalizedPath, "");
       await openNote(app, file);
       await writeVisibleContent(app, file, content);
+      await assertVaultContent(app, file, content);
       const change = recordChange(options, {
         kind: "create",
         path: normalizedPath,
@@ -279,6 +302,7 @@ function appendNoteTool(
       const separator = existing.endsWith("\n") || content.startsWith("\n") ? "" : "\n";
       const nextContent = `${existing}${separator}${content}`;
       await writeVisibleContent(app, file, nextContent);
+      await assertVaultContent(app, file, nextContent);
       const change = recordChange(options, {
         kind: "append",
         path: file.path,
@@ -329,6 +353,7 @@ function replaceNoteTool(
 
       const nextContent = existing.replace(find, replace);
       await writeVisibleContent(app, file, nextContent);
+      await assertVaultContent(app, file, nextContent);
       const change = recordChange(options, {
         kind: "replace",
         path: file.path,
@@ -369,6 +394,7 @@ function overwriteNoteTool(
       await openNote(app, file);
       const existing = await app.vault.read(file);
       await writeVisibleContent(app, file, content);
+      await assertVaultContent(app, file, content);
       const change = recordChange(options, {
         kind: "overwrite",
         path: file.path,
@@ -472,6 +498,7 @@ function revertChangeTool(
       await requestWriteApproval(app, options, "Revert note edit", file.path, change.beforeContent);
       await openNote(app, file);
       await writeVisibleContent(app, file, change.beforeContent);
+      await assertVaultContent(app, file, change.beforeContent);
       history.markReverted(change.id);
       await showNotice(`Obsigent reverted ${change.id}`);
       return `Reverted ${change.id} and restored ${change.path}.`;
@@ -503,7 +530,7 @@ function getAllowedMarkdownFile(
   app: App,
   settings: ObsigentSettings,
   path: string,
-  action: "read" | "edited",
+  action: "read" | "opened" | "edited",
 ): TFile {
   const normalizedPath = normalizeMarkdownPath(path);
   assertPathAllowed(settings, normalizedPath);
@@ -622,6 +649,13 @@ async function openNote(app: App, file: TFile): Promise<void> {
   await leaf.openFile(file, { active: true });
   app.workspace.revealLeaf(leaf);
   await delay(WRITE_DELAY_MS);
+}
+
+async function assertVaultContent(app: App, file: TFile, expectedContent: string): Promise<void> {
+  const actualContent = await app.vault.read(file);
+  if (actualContent !== expectedContent) {
+    throw new Error(`Vault write verification failed for ${file.path}.`);
+  }
 }
 
 async function writeVisibleContent(app: App, file: TFile, content: string): Promise<void> {

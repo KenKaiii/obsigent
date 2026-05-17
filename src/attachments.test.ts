@@ -10,12 +10,13 @@ describe("attachments", () => {
     expect(ATTACHMENT_ACCEPT).toContain(".png");
     expect(ATTACHMENT_ACCEPT).toContain(".pdf");
     expect(ATTACHMENT_ACCEPT).toContain(".csv");
-    expect(ATTACHMENT_ACCEPT).toContain(".xlsx");
+    expect(ATTACHMENT_ACCEPT).not.toContain(".xlsx");
   });
 
   it("rejects unsupported attachment extensions", () => {
     expect(isSupportedAttachment(makeFile("hi", "notes.txt"))).toBe(true);
     expect(isSupportedAttachment(makeFile("hi", "archive.zip", "application/zip"))).toBe(false);
+    expect(isSupportedAttachment(makeFile("a,b", "data.xlsx"))).toBe(false);
   });
 
   it("processes text-like files into text content parts", async () => {

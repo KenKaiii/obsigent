@@ -155,10 +155,23 @@ describe("vault tools", () => {
       createVaultTools(app as never, { ...DEFAULT_SETTINGS, safetyMode: "read-only" }).map(
         (tool) => tool.name,
       ),
-    ).toEqual(["list_notes", "read_note", "search_notes"]);
+    ).toEqual(["list_notes", "read_note", "open_note", "search_notes"]);
     expect(createVaultTools(app as never, DEFAULT_SETTINGS).map((tool) => tool.name)).toContain(
       "create_note",
     );
+  });
+
+  it("opens an existing note without reading it", async () => {
+    const app = createMockApp([{ path: "Daily.md", extension: "md" }], { "Daily.md": "Start" });
+    const openNote = getTool(app, "open_note");
+
+    const result = await openNote.execute(
+      { path: "Daily.md" },
+      { signal: new AbortController().signal, toolCallId: "test" },
+    );
+
+    expect(result).toBe("Opened Daily.md.");
+    expect(app.openedPaths).toEqual(["Daily.md"]);
   });
 
   it("creates and opens a note before writing content without approval", async () => {

@@ -1,6 +1,5 @@
 import type { ImageContent, TextContent } from "@kenkaiiii/gg-ai";
 import mammoth from "mammoth";
-import { read, utils, type WorkSheet } from "xlsx";
 
 export const ACCEPTED_ATTACHMENT_EXTENSIONS = [
   ".avif",
@@ -22,9 +21,6 @@ export const ACCEPTED_ATTACHMENT_EXTENSIONS = [
   ".tiff",
   ".txt",
   ".webp",
-  ".xls",
-  ".xlsm",
-  ".xlsx",
 ] as const;
 
 export const ATTACHMENT_ACCEPT = ["image/*", ...ACCEPTED_ATTACHMENT_EXTENSIONS].join(",");
@@ -32,7 +28,6 @@ export const ATTACHMENT_ACCEPT = ["image/*", ...ACCEPTED_ATTACHMENT_EXTENSIONS].
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_TEXT_CHARS_PER_FILE = 80_000;
 const MAX_PDF_PAGES = 40;
-const MAX_SPREADSHEET_SHEETS = 12;
 type PdfTextItem = Readonly<{ str: string }>;
 
 type PdfJsModule = Readonly<{
@@ -73,7 +68,6 @@ const IMAGE_MIME_TYPES_BY_EXTENSION: Readonly<Record<string, string>> = {
 };
 
 const TEXT_EXTENSIONS = new Set([".csv", ".json", ".md", ".txt"]);
-const SPREADSHEET_EXTENSIONS = new Set([".xls", ".xlsm", ".xlsx"]);
 
 export type AttachmentContentPart = TextContent | ImageContent;
 
@@ -139,9 +133,6 @@ async function extractTextAttachment(
   if (extension === ".docx") {
     return extractDocxText(arrayBuffer);
   }
-  if (SPREADSHEET_EXTENSIONS.has(extension)) {
-    return extractSpreadsheetText(arrayBuffer);
-  }
   if (TEXT_EXTENSIONS.has(extension)) {
     return file.text();
   }
@@ -201,30 +192,6 @@ async function extractDocxText(arrayBuffer: ArrayBuffer): Promise<string> {
   const warnings = result.messages.map((message) => message.message).filter(Boolean);
   const warningText = warnings.length ? `\n\n[DOCX warnings: ${warnings.join("; ")}]` : "";
   return `${result.value.trim()}${warningText}`.trim() || "[No extractable DOCX text found.]";
-}
-
-function extractSpreadsheetText(arrayBuffer: ArrayBuffer): string {
-  const workbook = read(arrayBuffer, { cellDates: true, type: "array" });
-  const sheets = workbook.SheetNames.slice(0, MAX_SPREADSHEET_SHEETS).flatMap(
-    (sheetName): string[] => {
-      const sheet = workbook.Sheets[sheetName];
-      if (!sheet) {
-        return [];
-      }
-
-      const csv = worksheetToCsv(sheet).trim();
-      return csv ? [`--- Sheet: ${sheetName} ---\n${csv}`] : [];
-    },
-  );
-  const truncatedNotice =
-    workbook.SheetNames.length > MAX_SPREADSHEET_SHEETS
-      ? `\n\n[Only the first ${MAX_SPREADSHEET_SHEETS} of ${workbook.SheetNames.length} sheets were extracted.]`
-      : "";
-  return `${sheets.join("\n\n")}${truncatedNotice}`.trim() || "[No spreadsheet data found.]";
-}
-
-function worksheetToCsv(sheet: WorkSheet): string {
-  return utils.sheet_to_csv(sheet, { blankrows: false, strip: true });
 }
 
 function makeTextPart(text: string): TextContent {

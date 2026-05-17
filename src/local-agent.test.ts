@@ -68,9 +68,9 @@ describe("local agent runtime", () => {
   });
 
   it("guides the agent to choose semantic or lexical retrieval", () => {
-    expect(SYSTEM_PROMPT).toContain("Prefer semantic_search for conceptual questions");
-    expect(SYSTEM_PROMPT).toContain("Prefer search_notes for exact strings");
-    expect(SYSTEM_PROMPT).toContain("Use find_similar_notes");
+    expect(SYSTEM_PROMPT).toContain("Use semantic_search for conceptual vault recall");
+    expect(SYSTEM_PROMPT).toContain("search_notes for exact text/path/tag matches");
+    expect(SYSTEM_PROMPT).toContain("find_similar_notes for related notes");
   });
 
   it("rebuilds and reports semantic index status", async () => {
@@ -90,7 +90,7 @@ describe("local agent runtime", () => {
   it("hydrates recreated agents with prior chat messages", async () => {
     const runtime = new LocalAgentRuntime();
     const signal = new AbortController().signal;
-    runtime.hydrateAgentForTesting(
+    await runtime.hydrateAgentForTesting(
       {
         app: createMockApp({}) as never,
         settings: DEFAULT_SETTINGS,
@@ -168,5 +168,64 @@ describe("local agent runtime", () => {
       expect(usedTool).toBe(true);
       expect(text.toLowerCase()).toContain("blue");
     },
+  );
+
+  it.skipIf(process.env.OBSIGENT_LIVE_OLLAMA !== "1")(
+    "can complete web search then create-note requests with Ollama",
+    async () => {
+      registerOllamaProvider();
+      const searchParameters = z.object({ query: z.string() });
+      const createParameters = z.object({ path: z.string(), content: z.string() });
+      const toolCalls: string[] = [];
+      const agent = new Agent({
+        provider: getOllamaProviderName() as Provider,
+        model: "gemma4:e2b",
+        baseUrl: "http://localhost:11434",
+        system: SYSTEM_PROMPT,
+        tools: [
+          {
+            name: "web_search",
+            description: "Search the web for current information.",
+            parameters: searchParameters,
+            execute: (args: unknown) => {
+              toolCalls.push("web_search");
+              searchParameters.parse(args);
+              return "Web search results for latest AI news: OpenAI released model updates; Google announced agent tooling.";
+            },
+          } satisfies AgentTool<typeof searchParameters>,
+          {
+            name: "create_note",
+            description:
+              "Create a new markdown note, open it visibly in Obsidian, then write its full content immediately.",
+            parameters: createParameters,
+            execute: (args: unknown) => {
+              const { path } = createParameters.parse(args);
+              toolCalls.push("create_note");
+              return `Created and opened ${path}. Change id: change-1.`;
+            },
+          } satisfies AgentTool<typeof createParameters>,
+        ],
+        maxTurns: 8,
+        maxTokens: 1000,
+        temperature: 0.2,
+      });
+
+      let text = "";
+      for await (const event of agent.prompt(
+        withDynamicPrompt(
+          "get the latest ai news then create a new note for it. any name.",
+          "Current date and time context: today",
+        ),
+      )) {
+        if (event.type === "text_delta") {
+          text += event.text;
+        }
+      }
+
+      expect(toolCalls).toContain("web_search");
+      expect(toolCalls).toContain("create_note");
+      expect(text).toMatch(/created|opened|change/i);
+    },
+    45_000,
   );
 });

@@ -31,8 +31,15 @@ export type McpClientAdapter = Readonly<{
   ) => Promise<McpCallToolResponse>;
 }>;
 
+export type McpToolApprovalRequest = Readonly<{
+  server: McpServerConfig;
+  toolName: string;
+  args: Record<string, unknown>;
+}>;
+
 export type McpClientOptions = Readonly<{
   createAdapter?: (server: McpServerConfig) => McpClientAdapter;
+  approveToolCall?: (request: McpToolApprovalRequest) => Promise<boolean> | boolean;
 }>;
 
 export class SdkMcpClientAdapter implements McpClientAdapter {
@@ -94,10 +101,11 @@ export async function createMcpTools(
 ): Promise<AgentTool[]> {
   const tools: AgentTool[] = [];
   for (const server of servers.filter((candidate) => candidate.enabled)) {
+    validateMcpEndpoint(server.endpoint);
     const client = options.createAdapter?.(server) ?? new SdkMcpClientAdapter(server);
     const definitions = await client.listTools(signal);
     for (const definition of definitions) {
-      tools.push(toAgentTool(server, client, definition));
+      tools.push(toAgentTool(server, client, definition, options));
     }
   }
   return tools.sort((first, second) => first.name.localeCompare(second.name));
@@ -107,8 +115,9 @@ function createTransport(
   server: McpServerConfig,
 ): SSEClientTransport | StreamableHTTPClientTransport {
   const headers = server.token ? { Authorization: `Bearer ${server.token}` } : undefined;
+  validateMcpEndpoint(server.endpoint);
   const endpoint = new URL(server.endpoint);
-  if (server.endpoint.endsWith("/sse")) {
+  if (server.transport === "sse") {
     return new SSEClientTransport(endpoint, {
       ...(headers ? { requestInit: { headers } } : {}),
       ...(headers
@@ -126,6 +135,7 @@ function toAgentTool(
   server: McpServerConfig,
   client: McpClientAdapter,
   definition: McpToolDefinition,
+  options: McpClientOptions,
 ): AgentTool<z.ZodRecord<z.ZodString, z.ZodUnknown>> {
   const parameters = z.record(z.string(), z.unknown());
   return {
@@ -135,6 +145,14 @@ function toAgentTool(
     rawInputSchema: definition.inputSchema ?? { type: "object", properties: {} },
     execute: async (args, context) => {
       const parsedArgs = parameters.parse(args);
+      const approved = await (options.approveToolCall?.({
+        server,
+        toolName: definition.name,
+        args: parsedArgs,
+      }) ?? true);
+      if (!approved) {
+        return `MCP tool ${definition.name} from ${server.name} was not approved.`;
+      }
       const result = await client.callTool(definition.name, parsedArgs, context.signal);
       if (result.isError) {
         throw new Error(formatMcpContent(result));
@@ -142,6 +160,20 @@ function toAgentTool(
       return formatMcpContent(result);
     },
   } satisfies AgentTool<typeof parameters>;
+}
+
+function validateMcpEndpoint(endpoint: string): void {
+  const parsed = new URL(endpoint);
+  if (parsed.protocol !== "https:" && !isLocalDevelopmentHost(parsed.hostname)) {
+    throw new Error(
+      "Remote MCP endpoints must use HTTPS. HTTP is only allowed for localhost development.",
+    );
+  }
+}
+
+function isLocalDevelopmentHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
 }
 
 function formatMcpContent(result: McpCallToolResponse): string {

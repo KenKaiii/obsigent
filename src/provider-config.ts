@@ -10,12 +10,16 @@ export type ChatProviderConfig = Readonly<{
   apiKey?: string;
 }>;
 
-export function getChatProviderConfig(settings: ObsigentSettings): ChatProviderConfig {
+export function getChatProviderConfig(
+  settings: ObsigentSettings,
+  openAiCompatibleApiKey?: string,
+): ChatProviderConfig {
   if (settings.provider === "openai-compatible") {
     return {
       provider: getOpenAiCompatibleProviderName() as Provider,
       baseUrl: settings.openAiCompatibleEndpoint.replace(/\/+$/u, ""),
       model: settings.model,
+      ...(openAiCompatibleApiKey ? { apiKey: openAiCompatibleApiKey } : {}),
     };
   }
 

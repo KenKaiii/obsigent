@@ -72,6 +72,9 @@ const UNKNOWN_TOOL_STATUS_LABELS: readonly string[] = [
 
 const MAX_AGENT_PRIOR_MESSAGES = 24;
 const MAX_AGENT_PRIOR_CHARS = 32_000;
+const MAX_VISIBLE_CONTEXT_MESSAGES = 8;
+const MAX_VISIBLE_CONTEXT_CHARS = 6_000;
+const OLLAMA_DOWNLOAD_URL = "https://ollama.com/download";
 
 const IMAGE_FILE_EXTENSIONS = new Set([
   "avif",
@@ -405,8 +408,10 @@ export class ObsigentView extends ItemView {
   private renderComposer(root: Element): void {
     const composer = root.createDiv({ cls: "obsigent-composer" });
 
+    this.renderSetupCard(composer);
     this.renderAttachments(composer);
     this.renderSemanticIndexBar(composer);
+    this.renderRelatedNotes(composer);
 
     const inputWrap = composer.createDiv({ cls: "obsigent-input-wrap" });
     const inputLayer = inputWrap.createDiv({ cls: "obsigent-input-layer" });
@@ -423,6 +428,8 @@ export class ObsigentView extends ItemView {
     input.disabled = this.isSubmitting || this.isProcessingAttachments;
     this.updateMentionSuggestions(input);
     this.renderMentionSuggestions(inputWrap, input);
+
+    this.renderPromptShortcuts(inputWrap, input);
 
     const controlsRow = inputWrap.createDiv({ cls: "obsigent-input-controls" });
     const resetButton = controlsRow.createEl("button", {
@@ -517,6 +524,43 @@ export class ObsigentView extends ItemView {
     });
 
     this.focusComposer(input);
+  }
+
+  private renderPromptShortcuts(parent: HTMLElement, input: HTMLTextAreaElement): void {
+    const hasTemplates = this.plugin.settings.promptTemplates.length > 0;
+    const hasProject = this.hasProjectContext();
+    if (!hasTemplates && !hasProject) {
+      return;
+    }
+
+    const shortcuts = parent.createDiv({ cls: "obsigent-prompt-shortcuts" });
+    for (const template of this.plugin.settings.promptTemplates) {
+      const button = shortcuts.createEl("button", {
+        cls: "obsigent-prompt-template",
+        attr: { type: "button" },
+        text: template.length > 40 ? `${template.slice(0, 37)}…` : template,
+      });
+      button.disabled = this.isSubmitting;
+      this.registerDomEvent(button, "click", () => {
+        this.draftPrompt = input.value.trim() ? `${input.value.trim()}\n\n${template}` : template;
+        this.renderComposerOnly();
+      });
+    }
+
+    if (hasProject) {
+      const projectButton = shortcuts.createEl("button", {
+        cls: "obsigent-project-context",
+        attr: { type: "button" },
+        text: "Use project context",
+      });
+      projectButton.disabled = this.isSubmitting;
+      this.registerDomEvent(projectButton, "click", () => {
+        this.draftPrompt = input.value.trim()
+          ? `${input.value.trim()}\n\nUse my configured project context.`
+          : "Use my configured project context.";
+        this.renderComposerOnly();
+      });
+    }
   }
 
   private renderDraftHighlight(parent: HTMLElement): void {
@@ -617,6 +661,85 @@ export class ObsigentView extends ItemView {
     this.mentionSuggestions = [];
     this.activeMentionSuggestionIndex = 0;
     this.renderComposerOnly();
+  }
+
+  private renderSetupCard(parent: HTMLElement): void {
+    const needsOllama = this.modelLoadError !== null;
+    const needsModel = !needsOllama && !this.installedModelNames.has(this.plugin.settings.model);
+    if (!needsOllama && !needsModel) {
+      return;
+    }
+
+    const bar = parent.createDiv({ cls: "obsigent-semantic-index-bar" });
+    bar.createSpan({
+      cls: "obsigent-semantic-index-label",
+      text: needsOllama
+        ? "Ollama is not running"
+        : `${getVisionModel(this.plugin.settings.model).label} not installed`,
+    });
+
+    if (needsOllama) {
+      const downloadButton = bar.createEl("button", {
+        cls: "obsigent-semantic-index-rebuild",
+        attr: { type: "button" },
+        text: "Install Ollama",
+      });
+      this.registerDomEvent(downloadButton, "click", () => {
+        window.open(OLLAMA_DOWNLOAD_URL, "_blank", "noopener");
+      });
+      return;
+    }
+
+    const downloadButton = bar.createEl("button", {
+      cls: "obsigent-semantic-index-rebuild",
+      attr: { type: "button" },
+      text: this.modelDownloadController ? "Downloading…" : "Download",
+    });
+    downloadButton.disabled = this.modelDownloadController !== null;
+    this.registerDomEvent(downloadButton, "click", () => {
+      void this.downloadModel(this.plugin.settings.model);
+    });
+  }
+
+  private renderRelatedNotes(parent: HTMLElement): void {
+    const activeFile = this.app.workspace.getActiveFile();
+    if (!activeFile || !this.plugin.settings.semanticSearchEnabled) {
+      return;
+    }
+
+    let results: ReturnType<typeof this.plugin.localAgent.findSimilarNotesForPath> = [];
+    try {
+      results = this.plugin.localAgent.findSimilarNotesForPath(
+        activeFile.path,
+        {
+          app: this.app,
+          settings: this.plugin.settings,
+        },
+        3,
+      );
+    } catch {
+      return;
+    }
+
+    if (results.length === 0) {
+      return;
+    }
+
+    const relatedEl = parent.createDiv({ cls: "obsigent-related-notes" });
+    relatedEl.createDiv({ cls: "obsigent-related-title", text: "Related notes" });
+    for (const result of results) {
+      const button = relatedEl.createEl("button", {
+        cls: "obsigent-related-note",
+        attr: { type: "button" },
+        text: result.path,
+      });
+      this.registerDomEvent(button, "click", () => {
+        this.draftPrompt = this.draftPrompt.trim()
+          ? `${this.draftPrompt.trim()} @${result.path}`
+          : `Tell me how @Current note relates to @${result.path}`;
+        this.renderComposerOnly();
+      });
+    }
   }
 
   private renderSemanticIndexBar(parent: HTMLElement): void {
@@ -769,9 +892,15 @@ export class ObsigentView extends ItemView {
     }
 
     if (isInstalled) {
-      if (!isActive) {
-        row.createDiv({ cls: "obsigent-model-state", text: "Ready" });
-      }
+      const stateEl = row.createDiv({
+        cls: `obsigent-model-state${isActive ? " obsigent-model-state-active" : ""}`,
+        attr: {
+          "aria-label": isActive ? "Current model" : "Installed model",
+          title: isActive ? "Current model" : "Installed",
+        },
+        text: isActive ? "✓" : "●",
+      });
+      stateEl.setAttribute("role", "img");
       return;
     }
 
@@ -802,8 +931,14 @@ export class ObsigentView extends ItemView {
       },
     });
     cancelButton.createSpan({ text: "Cancel" });
-    this.registerDomEvent(cancelButton, "click", () => {
+    this.registerDomEvent(cancelButton, "pointerdown", (event: PointerEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
       this.cancelModelDownload();
+    });
+    this.registerDomEvent(cancelButton, "click", (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
     });
   }
 
@@ -899,6 +1034,9 @@ export class ObsigentView extends ItemView {
         this.plugin.settings.localEndpoint,
         modelId,
         (progress) => {
+          if (abortController.signal.aborted || this.modelDownloadController !== abortController) {
+            return;
+          }
           this.modelDownloadProgress = progress;
           this.render();
         },
@@ -924,7 +1062,15 @@ export class ObsigentView extends ItemView {
   }
 
   private cancelModelDownload(): void {
-    this.modelDownloadController?.abort();
+    const controller = this.modelDownloadController;
+    if (!controller) {
+      return;
+    }
+
+    this.modelDownloadController = null;
+    this.modelDownloadProgress = null;
+    controller.abort();
+    this.render();
   }
 
   private renderAttachments(parent: Element): void {
@@ -1014,8 +1160,10 @@ export class ObsigentView extends ItemView {
       app: this.app,
       settings: this.plugin.settings,
       prompt: trimmedPrompt,
+      ...(this.hasProjectContext() ? { projectContext: this.createProjectContextBlock() } : {}),
     });
-    const submittedPrompt = this.createSubmittedPrompt(resolvedContext.request);
+    const requestWithVisibleContext = this.withVisibleConversationContext(resolvedContext.request);
+    const submittedPrompt = this.createSubmittedPrompt(requestWithVisibleContext);
     const displayPrompt = this.createDisplayPrompt(trimmedPrompt);
 
     const priorMessages = this.createAgentPriorMessages();
@@ -1112,6 +1260,56 @@ export class ObsigentView extends ItemView {
     await this.plugin.saveChatSession(
       serializeChatSession(this.messages, new Date().toISOString()),
     );
+  }
+
+  private hasProjectContext(): boolean {
+    return (
+      this.plugin.settings.projectFolders.length > 0 || this.plugin.settings.projectTags.length > 0
+    );
+  }
+
+  private createProjectContextBlock(): { label: string; content: string; truncated: boolean } {
+    const lines = ["Use this saved project context when it is relevant to the request:"];
+    if (this.plugin.settings.projectFolders.length > 0) {
+      lines.push(`Folders: ${this.plugin.settings.projectFolders.join(", ")}`);
+    }
+    if (this.plugin.settings.projectTags.length > 0) {
+      lines.push(`Tags: ${this.plugin.settings.projectTags.join(", ")}`);
+    }
+    return { label: "Configured project context", content: lines.join("\n"), truncated: false };
+  }
+
+  private withVisibleConversationContext(request: string): string {
+    const context = this.createVisibleConversationContext();
+    if (!context) {
+      return request;
+    }
+
+    return `<recent_conversation>
+${context}
+</recent_conversation>
+
+<current_request>${request}</current_request>`;
+  }
+
+  private createVisibleConversationContext(): string {
+    const contextMessages = this.messages
+      .filter((message) => message.text.trim() && !message.text.startsWith("Local model error:"))
+      .slice(-MAX_VISIBLE_CONTEXT_MESSAGES);
+    let remainingChars = MAX_VISIBLE_CONTEXT_CHARS;
+    const lines: string[] = [];
+
+    for (const message of contextMessages.reverse()) {
+      if (remainingChars <= 0) {
+        break;
+      }
+      const role = message.role === "user" ? "User" : "Assistant";
+      const content = truncateForPriorMessage(message.text, remainingChars);
+      remainingChars -= content.length;
+      lines.push(`${role}: ${content}`);
+    }
+
+    return lines.reverse().join("\n\n");
   }
 
   private createAgentPriorMessages(): readonly Message[] {

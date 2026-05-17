@@ -13,9 +13,11 @@ import {
 import { isDebugEnabled, logDebug } from "./debug";
 
 type OllamaToolCall = Readonly<{
+  type?: "function";
   function?: Readonly<{
+    index?: number;
     name?: string;
-    arguments?: Record<string, unknown>;
+    arguments?: Record<string, unknown> | string;
   }>;
 }>;
 
@@ -117,6 +119,7 @@ async function* runOllamaStream(
   let buffer = "";
   let text = "";
   const toolCalls: ToolCall[] = [];
+  const shouldBufferText = (options.tools?.length ?? 0) > 0;
 
   const reader = response.body.getReader();
   try {
@@ -140,7 +143,9 @@ async function* runOllamaStream(
         const delta = chunk.message?.content ?? "";
         if (delta) {
           text += delta;
-          yield { type: "text_delta", text: delta };
+          if (!shouldBufferText) {
+            yield { type: "text_delta", text: delta };
+          }
         }
         const newToolCalls = toToolCalls(chunk.message?.tool_calls ?? [], toolCalls.length);
         if (newToolCalls.length > 0) {
@@ -156,12 +161,33 @@ async function* runOllamaStream(
     reader.releaseLock();
   }
 
+  const responseText =
+    toolCalls.length > 0 ? "" : text || summarizeLatestToolResults(requestBody.messages);
+  if (shouldBufferText && responseText) {
+    yield { type: "text_delta", text: responseText };
+  }
   logDebug(isDebugEnabled(), runId, "ollama", "response_done", {
-    textLength: text.length,
+    textLength: responseText.length,
     toolCallCount: toolCalls.length,
     elapsedMs: Math.round(performance.now() - startedAt),
   });
-  return toStreamResponse(text, toolCalls);
+  return toStreamResponse(responseText, toolCalls);
+}
+
+function summarizeLatestToolResults(messages: readonly OllamaMessage[]): string {
+  const latestToolResults: OllamaMessage[] = [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "tool") {
+      break;
+    }
+    latestToolResults.unshift(message);
+  }
+
+  return latestToolResults
+    .map((message) => message.content.trim())
+    .filter((content) => content.length > 0)
+    .join("\n");
 }
 
 function toStreamResponse(text: string, toolCalls: readonly ToolCall[] = []): StreamResponse {
@@ -223,8 +249,10 @@ function toOllamaAssistantMessage(content: Message["content"]): OllamaMessage {
 
   const toolCalls = content
     .filter((part): part is ToolCall => part.type === "tool_call")
-    .map((toolCall) => ({
+    .map((toolCall, index) => ({
+      type: "function" as const,
       function: {
+        index,
         name: toolCall.name,
         arguments: toolCall.args,
       },
@@ -260,10 +288,26 @@ function toToolCalls(toolCalls: readonly OllamaToolCall[], offset = 0): ToolCall
         type: "tool_call",
         id: `ollama-tool-${offset + index}:${name}`,
         name,
-        args: toolCall.function?.arguments ?? {},
+        args: parseToolArguments(toolCall.function?.arguments),
       },
     ];
   });
+}
+
+function parseToolArguments(
+  args: Record<string, unknown> | string | undefined,
+): Record<string, unknown> {
+  if (!args) {
+    return {};
+  }
+  if (typeof args !== "string") {
+    return args;
+  }
+
+  const parsed = JSON.parse(args) as unknown;
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : {};
 }
 
 function zodToBasicJsonSchema(parameters: Tool["parameters"]): Record<string, unknown> {

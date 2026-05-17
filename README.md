@@ -17,6 +17,51 @@ It is meant to feel like a small agent sitting next to your notes — not a whol
 - Search and fetch web pages for current info
 - Inspect tags, frontmatter, backlinks, broken links, tasks, and safe broad-edit previews
 
+## Setup
+
+1. Install [Ollama](https://ollama.com/download) on desktop, or configure an OpenAI-compatible endpoint in Obsidian settings.
+2. Enable Obsigent in Obsidian.
+3. Open **Settings → Obsigent** to choose a provider, model, safety mode, excluded folders, prompt templates, and project context.
+4. For Ollama, use the model picker in the sidebar or run `pnpm prepare:gemma4` while developing locally.
+
+API keys are stored with Obsidian SecretStorage when available. MCP server tokens should be entered through settings or stored as Obsidian secrets, not committed to your vault.
+
+## Workflows
+
+- Use prompt templates from the composer for repeated tasks like summaries, edits, and reviews.
+- Configure project folders/tags to add NotebookLM-style project context hints to chats.
+- Use command palette actions for current-note, selection, rewrite, summarize, and append workflows.
+- Attach supported images, PDFs, DOCX, Markdown, JSON, CSV, and text files. Spreadsheet attachments are intentionally disabled until a maintained safe parser is used.
+
+## Local development
+
+```bash
+pnpm install
+pnpm dev
+```
+
+To copy assets into a test vault while watching `main.js`:
+
+```bash
+OBSIGENT_PLUGIN_DIR="/path/to/Vault/.obsidian/plugins/obsigent" pnpm dev:vault
+```
+
+Run checks before release:
+
+```bash
+pnpm check
+pnpm test
+pnpm build
+pnpm release:validate
+pnpm package
+```
+
+GitHub Actions run CI on pushes/PRs and package release assets from tags.
+
+## Mobile notes
+
+Obsigent is not marked desktop-only, but local Ollama normally runs on a desktop or server. On mobile, use a reachable remote/local-network endpoint, consider disabling semantic indexing for large vaults, and avoid large attachments on constrained devices.
+
 ## Safety model
 
 Obsigent keeps vault operations visible and conservative. Existing-note writes require approval, broad operations start as previews/plans, excluded folders are respected, and recent Obsigent changes can be reverted.

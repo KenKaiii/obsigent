@@ -50,16 +50,3 @@ export function logDebug(
 
   console.info("[obsigent]", entry);
 }
-
-export function getDebugEntries(): readonly DebugLogEntry[] {
-  return entries;
-}
-
-export function formatDebugEntries(): string {
-  return entries
-    .map((entry) => {
-      const data = entry.data ? ` ${JSON.stringify(entry.data)}` : "";
-      return `${entry.id} ${entry.at} ${entry.runId} ${entry.scope}:${entry.event}${data}`;
-    })
-    .join("\n");
-}

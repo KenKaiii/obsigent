@@ -59,27 +59,22 @@ export const VISION_MODELS: readonly VisionModel[] = [
   {
     id: "gemma4:e2b",
     label: "Gemma 4 E2B",
-    sizeLabel: "Current",
-  },
-  {
-    id: "gemma3:4b",
-    label: "Gemma 3 4B",
-    sizeLabel: "~3.3 GB",
+    sizeLabel: "~7.2 GB",
   },
   {
     id: "qwen2.5vl:3b",
     label: "Qwen2.5-VL 3B",
-    sizeLabel: "~2.9 GB",
-  },
-  {
-    id: "moondream:1.8b",
-    label: "Moondream 1.8B",
-    sizeLabel: "~1.7 GB",
+    sizeLabel: "~3.2 GB",
   },
   {
     id: "granite3.2-vision:2b",
     label: "Granite Vision 2B",
     sizeLabel: "~2.4 GB",
+  },
+  {
+    id: "moondream:1.8b",
+    label: "Moondream 1.8B",
+    sizeLabel: "~1.7 GB",
   },
 ];
 
@@ -117,6 +112,7 @@ export async function pullModel(
   onProgress: (progress: PullProgress) => void,
   signal?: AbortSignal,
 ): Promise<void> {
+  throwIfAborted(signal);
   const url = new URL("/api/pull", getOllamaOrigin(endpoint));
   const response = await fetch(url, {
     method: "POST",
@@ -125,6 +121,7 @@ export async function pullModel(
     ...(signal ? { signal } : {}),
   });
 
+  throwIfAborted(signal);
   if (!response.ok) {
     throw new Error(`Ollama returned ${response.status}: ${await response.text()}`);
   }
@@ -134,10 +131,16 @@ export async function pullModel(
 
   const decoder = new TextDecoder();
   const reader = response.body.getReader();
+  const cancelReader = (): void => {
+    void reader.cancel().catch(() => undefined);
+  };
+  signal?.addEventListener("abort", cancelReader, { once: true });
   let buffer = "";
   try {
     while (true) {
+      throwIfAborted(signal);
       const { done, value } = await reader.read();
+      throwIfAborted(signal);
       if (done) {
         break;
       }
@@ -155,10 +158,12 @@ export async function pullModel(
       }
     }
 
+    throwIfAborted(signal);
     if (buffer.trim()) {
       onProgress(toPullProgress(model, parsePullChunk(buffer.trim())));
     }
   } finally {
+    signal?.removeEventListener("abort", cancelReader);
     reader.releaseLock();
   }
 }
@@ -190,6 +195,12 @@ export function isVisionCatalogModel(modelId: string): boolean {
 function parsePullChunk(line: string): OllamaPullChunk {
   const parsed = JSON.parse(line) as unknown;
   return parsed && typeof parsed === "object" ? (parsed as OllamaPullChunk) : {};
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new DOMException("Model download cancelled.", "AbortError");
+  }
 }
 
 export function toPullProgress(model: string, chunk: OllamaPullChunk): PullProgress {
