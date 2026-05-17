@@ -173,10 +173,6 @@ export function getEmbeddingModel(modelId: string): EmbeddingModel {
   );
 }
 
-export function isEmbeddingCatalogModel(modelId: string): boolean {
-  return EMBEDDING_MODELS.some((model) => model.id === modelId);
-}
-
 export function getVisionModel(modelId: string): VisionModel {
   return (
     VISION_MODELS.find((model) => model.id === modelId) ?? {

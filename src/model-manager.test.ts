@@ -3,7 +3,6 @@ import {
   EMBEDDING_MODELS,
   getEmbeddingModel,
   getVisionModel,
-  isEmbeddingCatalogModel,
   isVisionCatalogModel,
   toPullProgress,
   VISION_MODELS,
@@ -29,7 +28,6 @@ describe("model manager", () => {
       label: "custom-vision:latest",
       sizeLabel: "Installed",
     });
-    expect(isEmbeddingCatalogModel("custom-embedding:latest")).toBe(false);
     expect(getEmbeddingModel("custom-embedding:latest")).toEqual({
       id: "custom-embedding:latest",
       label: "custom-embedding:latest",
