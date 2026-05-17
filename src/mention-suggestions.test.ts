@@ -3,6 +3,7 @@ import {
   applyMentionSuggestion,
   getMentionQuery,
   getMentionSuggestions,
+  getResolvedMentionRanges,
 } from "./mention-suggestions";
 import { DEFAULT_SETTINGS } from "./settings";
 
@@ -52,5 +53,51 @@ describe("mention suggestions", () => {
         detail: "Daily.md",
       }),
     ).toBe("Read @Daily.md please");
+  });
+
+  it("adds a trailing space after selected mentions at the end of the draft", () => {
+    const query = getMentionQuery("Read @Da", 8);
+    if (!query) {
+      throw new Error("Missing mention query");
+    }
+
+    expect(
+      applyMentionSuggestion("Read @Da", query, {
+        kind: "note",
+        label: "Daily",
+        insertText: "@Daily.md",
+        detail: "Daily.md",
+      }),
+    ).toBe("Read @Daily.md ");
+  });
+
+  it("finds only resolved mentions for highlighting", () => {
+    const app = createMockApp(["Daily.md", "Projects/Alpha.md"]);
+
+    expect(
+      getResolvedMentionRanges(
+        "Use @Daily.md and @Current note but not @Missing.md",
+        app as never,
+        DEFAULT_SETTINGS,
+      ),
+    ).toEqual([
+      { start: 4, end: 13, text: "@Daily.md", kind: "note" },
+      { start: 18, end: 31, text: "@Current note", kind: "special" },
+    ]);
+  });
+
+  it("finds resolved note mentions that include spaces", () => {
+    const app = createMockApp(["example apple.md", "Folder/another example.md"]);
+
+    expect(
+      getResolvedMentionRanges(
+        "Compare @example apple.md with @Folder/another example.md please",
+        app as never,
+        DEFAULT_SETTINGS,
+      ),
+    ).toEqual([
+      { start: 8, end: 25, text: "@example apple.md", kind: "note" },
+      { start: 31, end: 57, text: "@Folder/another example.md", kind: "note" },
+    ]);
   });
 });

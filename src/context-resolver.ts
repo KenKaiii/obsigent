@@ -94,25 +94,15 @@ export function parseContextReferences(prompt: string): readonly ContextReferenc
     }
   }
 
-  for (const match of prompt.matchAll(/(^|\s)@([^@\n\r]+?)(?=\s|$)/gu)) {
-    const raw = match[0].trim();
-    const target = match[2]?.trim();
-    const endIndex = (match.index ?? 0) + match[0].length;
+  for (const reference of parseAtPathReferences(prompt)) {
     if (
-      !target ||
-      /^Current$/iu.test(target) ||
-      /^Current note$/iu.test(target) ||
-      /^selection$/iu.test(target) ||
-      prompt.slice(endIndex).startsWith(" note")
+      /^Current$/iu.test(reference.target) ||
+      /^Current note$/iu.test(reference.target) ||
+      /^selection$/iu.test(reference.target)
     ) {
       continue;
     }
-
-    addReference(references, seen, {
-      kind: looksLikeFolderReference(target) ? "folder" : "note",
-      raw,
-      target,
-    });
+    addReference(references, seen, reference);
   }
 
   return references;
@@ -316,6 +306,48 @@ function makeBlock(label: string, content: string, remainingBudget: number): Res
     content: `${content.slice(0, Math.max(0, limit - suffix.length))}${suffix}`,
     truncated: true,
   };
+}
+
+function parseAtPathReferences(prompt: string): readonly ContextReference[] {
+  const references: ContextReference[] = [];
+  let cursor = 0;
+  while (cursor < prompt.length) {
+    const atIndex = prompt.indexOf("@", cursor);
+    if (atIndex === -1) {
+      break;
+    }
+    if (atIndex > 0 && !/\s/u.test(prompt[atIndex - 1] ?? "")) {
+      cursor = atIndex + 1;
+      continue;
+    }
+
+    const tail = prompt.slice(atIndex + 1);
+    const markdownEnd = tail.toLowerCase().indexOf(".md");
+    if (markdownEnd !== -1) {
+      const target = tail.slice(0, markdownEnd + 3).trim();
+      if (target) {
+        references.push({ kind: "note", raw: `@${target}`, target });
+        cursor = atIndex + target.length + 1;
+        continue;
+      }
+    }
+
+    const match = /^([^@\n\r\s]+)/u.exec(tail);
+    const target = match?.[1]?.trim();
+    if (target) {
+      references.push({
+        kind: looksLikeFolderReference(target) ? "folder" : "note",
+        raw: `@${target}`,
+        target,
+      });
+      cursor = atIndex + target.length + 1;
+      continue;
+    }
+
+    cursor = atIndex + 1;
+  }
+
+  return references;
 }
 
 function addReference(

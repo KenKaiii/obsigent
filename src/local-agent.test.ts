@@ -87,6 +87,30 @@ describe("local agent runtime", () => {
     expect(runtime.getSemanticIndexSnapshot(options)?.files).toHaveLength(1);
   });
 
+  it("hydrates recreated agents with prior chat messages", async () => {
+    const runtime = new LocalAgentRuntime();
+    const signal = new AbortController().signal;
+    runtime.hydrateAgentForTesting(
+      {
+        app: createMockApp({}) as never,
+        settings: DEFAULT_SETTINGS,
+        runId: "test",
+        onUpdate: () => undefined,
+        priorMessages: [
+          { role: "user", content: "My favorite color is blue." },
+          { role: "assistant", content: "I will remember that." },
+        ],
+      },
+      signal,
+    );
+
+    expect(runtime.getAgentMessagesForTesting()).toEqual([
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: "My favorite color is blue." },
+      { role: "assistant", content: "I will remember that." },
+    ]);
+  });
+
   it("loads semantic index snapshots in a fresh runtime", async () => {
     const firstRuntime = new LocalAgentRuntime();
     const baseOptions = {

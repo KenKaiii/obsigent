@@ -16,6 +16,13 @@ export type MentionQuery = Readonly<{
   query: string;
 }>;
 
+export type ResolvedMentionRange = Readonly<{
+  start: number;
+  end: number;
+  text: string;
+  kind: MentionSuggestionKind;
+}>;
+
 const SPECIAL_SUGGESTIONS: readonly MentionSuggestion[] = [
   { kind: "special", label: "Current note", insertText: "@Current note", detail: "Active note" },
   { kind: "special", label: "selection", insertText: "@selection", detail: "Selected editor text" },
@@ -74,8 +81,46 @@ export function applyMentionSuggestion(
 ): string {
   const before = value.slice(0, mentionQuery.start);
   const after = value.slice(mentionQuery.end);
-  const suffix = after.startsWith(" ") || after.length === 0 ? "" : " ";
+  const suffix = after.startsWith(" ") ? "" : " ";
   return `${before}${suggestion.insertText}${suffix}${after}`;
+}
+
+export function getResolvedMentionRanges(
+  value: string,
+  app: App,
+  settings: ObsigentSettings,
+): readonly ResolvedMentionRange[] {
+  const knownMentions = new Map<string, MentionSuggestionKind>();
+  for (const suggestion of [
+    ...SPECIAL_SUGGESTIONS,
+    ...getNoteSuggestions(app, settings),
+    ...getFolderSuggestions(app, settings),
+  ]) {
+    knownMentions.set(suggestion.insertText, suggestion.kind);
+  }
+
+  const ranges: ResolvedMentionRange[] = [];
+  for (const [mentionText, kind] of [...knownMentions.entries()].sort(
+    ([first], [second]) => second.length - first.length,
+  )) {
+    const escapedMention = escapeRegExp(mentionText);
+    const mentionPattern = new RegExp(`(^|\\s)(${escapedMention})(?=\\s|$)`, "gu");
+    for (const match of value.matchAll(mentionPattern)) {
+      const prefix = match[1] ?? "";
+      const start = match.index + prefix.length;
+      const end = start + mentionText.length;
+      if (ranges.some((range) => start < range.end && end > range.start)) {
+        continue;
+      }
+      ranges.push({ start, end, text: mentionText, kind });
+    }
+  }
+
+  return ranges.sort((first, second) => first.start - second.start);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function getNoteSuggestions(app: App, settings: ObsigentSettings): readonly MentionSuggestion[] {

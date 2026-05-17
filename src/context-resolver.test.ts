@@ -67,6 +67,19 @@ describe("parseContextReferences", () => {
       { kind: "note", raw: "@Daily", target: "Daily" },
     ]);
   });
+
+  it("parses @ note references with spaces through the .md extension", () => {
+    expect(
+      parseContextReferences("Use @example apple.md and @Folder/another example.md please"),
+    ).toEqual([
+      { kind: "note", raw: "@example apple.md", target: "example apple.md" },
+      {
+        kind: "note",
+        raw: "@Folder/another example.md",
+        target: "Folder/another example.md",
+      },
+    ]);
+  });
 });
 
 describe("resolvePromptContext", () => {
@@ -87,6 +100,22 @@ describe("resolvePromptContext", () => {
     expect(result.request).toContain("daily note");
     expect(result.request).toContain("selected text");
     expect(result.displayRequest).toContain("Context:\n- Current note: Daily.md\n- Selection");
+  });
+
+  it("resolves note mentions with spaces", async () => {
+    const app = createMockApp({
+      contents: { "example apple.md": "spaced note" },
+    });
+
+    const result = await resolvePromptContext({
+      app: app as never,
+      settings: DEFAULT_SETTINGS,
+      prompt: "Read @example apple.md please",
+    });
+
+    expect(result.warnings).toEqual([]);
+    expect(result.request).toContain('<context_block label="Note: example apple.md">');
+    expect(result.request).toContain("spaced note");
   });
 
   it("reports ambiguous note mentions", async () => {

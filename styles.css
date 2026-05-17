@@ -57,6 +57,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--size-2-3);
+  min-width: 0;
 }
 
 .obsigent-message-user {
@@ -64,6 +65,10 @@
 }
 
 .obsigent-message-bubble {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   line-height: var(--line-height-normal);
   user-select: text;
   -webkit-user-select: text;
@@ -71,6 +76,9 @@
 
 .obsigent-markdown-content {
   width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .obsigent-markdown-content > :first-child {
@@ -92,7 +100,10 @@
 
 .obsigent-markdown-content pre,
 .obsigent-markdown-content code {
+  max-width: 100%;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .obsigent-markdown-content table {
@@ -351,16 +362,65 @@
   font-size: var(--font-ui-smaller);
 }
 
+.obsigent-input-layer {
+  position: relative;
+  width: 100%;
+  min-height: 88px;
+}
+
+.obsigent-input-highlight,
 .obsigent-input {
   width: 100%;
   min-height: 88px;
   max-height: 180px;
   padding: 0;
-  resize: none;
   border: 0;
+  font: inherit;
+  line-height: var(--line-height-normal);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.obsigent-input-highlight {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  color: var(--text-normal);
+}
+
+.obsigent-input {
+  position: relative;
+  resize: none;
   background: transparent;
   box-shadow: none;
-  line-height: var(--line-height-normal);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--text-normal);
+}
+
+.obsigent-input::placeholder {
+  color: var(--text-faint);
+}
+
+.obsigent-resolved-mention {
+  color: var(--text-accent);
+  border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--text-accent) 14%, transparent);
+}
+
+.obsigent-markdown-content .obsigent-resolved-mention {
+  font-weight: var(--font-semibold);
+}
+
+.obsigent-resolved-mention-folder {
+  color: var(--color-orange);
+  background: rgba(var(--color-orange-rgb), 0.14);
+}
+
+.obsigent-resolved-mention-special {
+  color: var(--color-purple);
+  background: rgba(var(--color-purple-rgb), 0.14);
 }
 
 .obsigent-input:hover,

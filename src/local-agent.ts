@@ -1,6 +1,6 @@
 import type { AgentEvent } from "@kenkaiiii/gg-agent";
 import { Agent } from "@kenkaiiii/gg-agent";
-import type { ImageContent, TextContent } from "@kenkaiiii/gg-ai";
+import type { ImageContent, Message, TextContent } from "@kenkaiiii/gg-ai";
 import type { App } from "obsidian";
 import { logDebug, setDebugEnabled } from "./debug";
 import { embedWithOllama } from "./embedding-provider";
@@ -56,6 +56,7 @@ export type LocalAgentOptions = Readonly<{
   settings: ObsigentSettings;
   onUpdate: (update: LocalAgentUpdate) => void;
   runId: string;
+  priorMessages?: readonly Message[];
 }>;
 
 export type SemanticIndexRuntimeOptions = Readonly<{
@@ -195,6 +196,14 @@ export class LocalAgentRuntime {
     this.agentKey = null;
   }
 
+  public hydrateAgentForTesting(options: LocalAgentOptions, signal: AbortSignal): void {
+    this.getAgent(options, signal);
+  }
+
+  public getAgentMessagesForTesting(): readonly Message[] {
+    return this.agent?.getMessages() ?? [];
+  }
+
   private getAgent(options: LocalAgentOptions, signal: AbortSignal): Agent {
     registerOllamaProvider();
     registerOpenAiCompatibleProvider();
@@ -217,6 +226,7 @@ export class LocalAgentRuntime {
       model: providerConfig.model,
       baseUrl: providerConfig.baseUrl,
       system: SYSTEM_PROMPT,
+      ...(options.priorMessages?.length ? { priorMessages: [...options.priorMessages] } : {}),
       tools: this.createTools(options),
       maxTurns: 20,
       maxTokens: 4096,

@@ -1,4 +1,4 @@
-import type { ImageContent, TextContent } from "@kenkaiiii/gg-ai";
+import type { ImageContent, Message, TextContent } from "@kenkaiiii/gg-ai";
 import {
   Component,
   ItemView,
@@ -25,6 +25,7 @@ import {
   applyMentionSuggestion,
   getMentionQuery,
   getMentionSuggestions,
+  getResolvedMentionRanges,
   type MentionQuery,
   type MentionSuggestion,
 } from "./mention-suggestions";
@@ -68,6 +69,9 @@ const UNKNOWN_TOOL_STATUS_LABELS: readonly string[] = [
   "Opening a tiny toolkit 🧰",
   "Following a hunch trail 🧭",
 ];
+
+const MAX_AGENT_PRIOR_MESSAGES = 24;
+const MAX_AGENT_PRIOR_CHARS = 32_000;
 
 const IMAGE_FILE_EXTENSIONS = new Set([
   "avif",
@@ -212,6 +216,35 @@ function formatSemanticIndexStatus(
   }
 
   return `Indexed ${status.noteCount} notes · ${status.chunkCount} chunks`;
+}
+
+function truncateForPriorMessage(text: string, remainingChars: number): string {
+  if (text.length <= remainingChars) {
+    return text;
+  }
+  const suffix = "\n\n[Earlier message truncated]";
+  return `${text.slice(0, Math.max(0, remainingChars - suffix.length))}${suffix}`;
+}
+
+function renderTextWithResolvedMentions(
+  parent: Node,
+  value: string,
+  ranges: readonly ReturnType<typeof getResolvedMentionRanges>[number][],
+): void {
+  let cursor = 0;
+  for (const range of ranges) {
+    if (range.start > cursor) {
+      parent.appendChild(document.createTextNode(value.slice(cursor, range.start)));
+    }
+    const mentionEl = document.createElement("span");
+    mentionEl.className = `obsigent-resolved-mention obsigent-resolved-mention-${range.kind}`;
+    mentionEl.textContent = range.text;
+    parent.appendChild(mentionEl);
+    cursor = range.end;
+  }
+  if (cursor < value.length) {
+    parent.appendChild(document.createTextNode(value.slice(cursor)));
+  }
 }
 
 function safeDecodeURIComponent(value: string): string {
@@ -376,11 +409,14 @@ export class ObsigentView extends ItemView {
     this.renderSemanticIndexBar(composer);
 
     const inputWrap = composer.createDiv({ cls: "obsigent-input-wrap" });
-    const input = inputWrap.createEl("textarea", {
+    const inputLayer = inputWrap.createDiv({ cls: "obsigent-input-layer" });
+    this.renderDraftHighlight(inputLayer);
+    const input = inputLayer.createEl("textarea", {
       cls: "obsigent-input",
       attr: {
         placeholder: "Ask about your vault…",
         rows: "3",
+        spellcheck: "true",
       },
     });
     input.value = this.draftPrompt;
@@ -481,6 +517,21 @@ export class ObsigentView extends ItemView {
     });
 
     this.focusComposer(input);
+  }
+
+  private renderDraftHighlight(parent: HTMLElement): void {
+    const highlightEl = parent.createDiv({
+      cls: "obsigent-input-highlight",
+      attr: { "aria-hidden": "true" },
+    });
+    renderTextWithResolvedMentions(
+      highlightEl,
+      this.draftPrompt,
+      getResolvedMentionRanges(this.draftPrompt, this.app, this.plugin.settings),
+    );
+    if (!this.draftPrompt) {
+      highlightEl.createSpan({ text: "\u200b" });
+    }
   }
 
   private updateMentionSuggestions(input: HTMLTextAreaElement): void {
@@ -965,7 +1016,9 @@ export class ObsigentView extends ItemView {
       prompt: trimmedPrompt,
     });
     const submittedPrompt = this.createSubmittedPrompt(resolvedContext.request);
-    const displayPrompt = this.createDisplayPrompt(resolvedContext.displayRequest);
+    const displayPrompt = this.createDisplayPrompt(trimmedPrompt);
+
+    const priorMessages = this.createAgentPriorMessages();
 
     this.isSubmitting = true;
     this.isStopping = false;
@@ -1005,6 +1058,7 @@ export class ObsigentView extends ItemView {
         app: this.app,
         settings: this.plugin.settings,
         runId,
+        ...(priorMessages.length ? { priorMessages } : {}),
         onUpdate: (update) => {
           if (update.type === "text") {
             this.updateMessage(assistantMessageId, update.text);
@@ -1058,6 +1112,25 @@ export class ObsigentView extends ItemView {
     await this.plugin.saveChatSession(
       serializeChatSession(this.messages, new Date().toISOString()),
     );
+  }
+
+  private createAgentPriorMessages(): readonly Message[] {
+    const messages: Message[] = [];
+    let remainingChars = MAX_AGENT_PRIOR_CHARS;
+    const chatMessages = this.messages
+      .filter((message) => message.text.trim() && !message.text.startsWith("Local model error:"))
+      .slice(-MAX_AGENT_PRIOR_MESSAGES);
+
+    for (const message of chatMessages.reverse()) {
+      if (remainingChars <= 0) {
+        break;
+      }
+      const content = truncateForPriorMessage(message.text, remainingChars);
+      remainingChars -= content.length;
+      messages.push({ role: message.role, content });
+    }
+
+    return messages.reverse();
   }
 
   private createSubmittedPrompt(prompt: string): string | (TextContent | ImageContent)[] {
@@ -1181,6 +1254,7 @@ export class ObsigentView extends ItemView {
           return;
         }
 
+        this.highlightResolvedMentions(renderedEl);
         this.renderVaultImages(renderedEl, sourcePath);
       })
       .catch((error) => {
@@ -1191,8 +1265,37 @@ export class ObsigentView extends ItemView {
         const message = error instanceof Error ? error.message : String(error);
         logDebug(this.plugin.settings.debug, "markdown", "view", "render_error", { message });
         renderedEl.empty();
-        renderedEl.setText(markdown);
+        renderTextWithResolvedMentions(
+          renderedEl,
+          markdown,
+          getResolvedMentionRanges(markdown, this.app, this.plugin.settings),
+        );
       });
+  }
+
+  private highlightResolvedMentions(renderedEl: HTMLElement): void {
+    const walker = document.createTreeWalker(renderedEl, NodeFilter.SHOW_TEXT);
+    const textNodes: Text[] = [];
+    while (true) {
+      const node = walker.nextNode();
+      if (!node) {
+        break;
+      }
+      if (node.parentElement?.closest(".obsigent-resolved-mention")) {
+        continue;
+      }
+      textNodes.push(node as Text);
+    }
+
+    for (const textNode of textNodes) {
+      const ranges = getResolvedMentionRanges(textNode.data, this.app, this.plugin.settings);
+      if (ranges.length === 0 || !textNode.parentNode) {
+        continue;
+      }
+      const fragment = document.createDocumentFragment();
+      renderTextWithResolvedMentions(fragment, textNode.data, ranges);
+      textNode.parentNode.replaceChild(fragment, textNode);
+    }
   }
 
   private renderVaultImages(renderedEl: HTMLElement, sourcePath: string): void {
