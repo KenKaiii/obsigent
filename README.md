@@ -6,6 +6,9 @@ It lives inside your vault and can help you read notes, search around, make new 
 
 It is meant to feel like a small agent sitting next to your notes — not a whole separate coding setup.
 
+> [!TIP]
+> **Want to build your own apps with AI?** A free 7-day build challenge and 20+ step-by-step projects are in my free community: **[skool.com/raid](https://www.skool.com/raid)**
+
 ## What it can do
 
 - Chat with a local model through Ollama, or an optional OpenAI-compatible endpoint
